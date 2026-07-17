@@ -1,0 +1,16 @@
+backend/.venv/
+backend/.venv-linux/
+backend/__pycache__/
+**/__pycache__/
+*.py[cod]
+frontend/node_modules/
+frontend/dist/
+build/
+dist/
+release/
+release-kit/
+.flatpak-builder/
+flatpak-build/
+flatpak-repo/
+config/settings.json
+.env

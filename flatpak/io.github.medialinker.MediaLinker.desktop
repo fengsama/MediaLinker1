@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=影视硬链接整理工具
+Comment=为 Emby 和 Kodi 整理影视文件
+Exec=media-linker
+Icon=io.github.medialinker.MediaLinker
+Terminal=false
+Type=Application
+Categories=AudioVideo;Utility;
+StartupNotify=true

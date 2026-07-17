@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.medialinker.MediaLinker</id>
+  <name>影视硬链接整理工具</name>
+  <summary>为 Emby 和 Kodi 整理影视文件</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>扫描本地或网络目录，搜索中文影视资料，并通过硬链接或移动重命名生成适合 Emby、Kodi 刮削的媒体库结构。</p>
+  </description>
+  <launchable type="desktop-id">io.github.medialinker.MediaLinker.desktop</launchable>
+  <releases>
+    <release version="0.6.0" date="2026-07-17"/>
+  </releases>
+</component>
