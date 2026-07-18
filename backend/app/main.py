@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import files, health, metadata, organizer, updates
+from app.routers import files, health, lifecycle, metadata, organizer, updates
 from app.version import __version__
 
 
@@ -24,6 +24,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router, prefix="/api")
+app.include_router(lifecycle.router, prefix="/api")
 app.include_router(files.router, prefix="/api/files")
 app.include_router(metadata.router, prefix="/api/metadata")
 app.include_router(organizer.router, prefix="/api/organizer")

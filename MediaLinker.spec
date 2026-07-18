@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+
 from PyInstaller.utils.hooks import collect_all
 
 uvicorn_datas, uvicorn_binaries, uvicorn_hiddenimports = collect_all("uvicorn")
@@ -32,7 +34,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=sys.platform != "win32",
     disable_windowed_traceback=False,
 )
 

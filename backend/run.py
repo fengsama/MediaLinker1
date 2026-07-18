@@ -1,5 +1,6 @@
 import os
 import socket
+import sys
 import threading
 import time
 import webbrowser
@@ -7,6 +8,12 @@ import webbrowser
 import uvicorn
 
 from app.main import app
+
+
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 
 def choose_port() -> int:
@@ -30,7 +37,7 @@ def main() -> None:
     print("=" * 58)
     print("影视硬链接整理工具已启动")
     print(f"访问地址：http://127.0.0.1:{port}")
-    print("关闭此窗口即可停止服务")
+    print("关闭所有 MediaLinker 网页后，服务会自动停止")
     print("=" * 58)
     if os.environ.get("MEDIALINKER_NO_BROWSER") != "1":
         threading.Thread(target=open_browser, args=(port,), daemon=True).start()

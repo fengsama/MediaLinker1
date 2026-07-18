@@ -34,7 +34,7 @@ const confirmOriginalChange = ref(false)
 const settingsOpen = ref(false)
 const settingsView = ref('menu')
 const updateInfo = ref({
-  current_version: '0.4.0',
+  current_version: '0.4.1',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
@@ -45,6 +45,25 @@ const updateInfo = ref({
 const updateState = ref('idle')
 const updateMessage = ref('')
 const autoUpdateAttempted = ref(false)
+let lifecycleSocket = null
+let lifecycleReconnectTimer = null
+let pageIsClosing = false
+
+function connectLifecycle() {
+  if (!window.WebSocket || pageIsClosing) return
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  lifecycleSocket = new WebSocket(`${protocol}//${window.location.host}/api/lifecycle`)
+  lifecycleSocket.addEventListener('open', () => lifecycleSocket.send('ready'))
+  lifecycleSocket.addEventListener('close', () => {
+    if (!pageIsClosing) lifecycleReconnectTimer = window.setTimeout(connectLifecycle, 1000)
+  })
+}
+
+window.addEventListener('beforeunload', () => {
+  pageIsClosing = true
+  if (lifecycleReconnectTimer) window.clearTimeout(lifecycleReconnectTimer)
+  lifecycleSocket?.close()
+})
 
 const platformLabel = computed(() => ({
   'windows-installer': 'Windows 安装版',
@@ -335,6 +354,7 @@ watch(targetPath, (value) => {
 watch(operationMode, () => { confirmOriginalChange.value = false; linkError.value = ''; linkResult.value = null })
 
 onMounted(() => {
+  connectLifecycle()
   checkHealth()
   checkMetadataStatus()
   targetPath.value = localStorage.getItem('media-linker-output-path') || ''

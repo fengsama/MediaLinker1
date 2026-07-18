@@ -54,6 +54,8 @@ MediaLinker 是一个运行在本地的影视文件整理 Web 工具，面向 NA
 - 已提供 Windows 标准 EXE 安装包和免安装绿色版。
 - 已提供 Linux x86_64 和 Flatpak 自动构建配置。
 - Windows、Linux 与 Flatpak 均可通过系统窗口选择本地文件夹。
+- Windows 客户端后台运行，不再显示命令行窗口。
+- 关闭所有 MediaLinker 网页后，打包版后台服务会自动退出；刷新页面不会误关闭。
 
 ## 命名规则
 
