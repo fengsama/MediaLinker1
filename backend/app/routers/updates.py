@@ -47,7 +47,10 @@ def _platform_info() -> tuple[str, str | None, bool]:
     if os.environ.get("FLATPAK_ID"):
         return "flatpak", "MediaLinker-x86_64.flatpak", False
     if sys.platform == "win32":
-        return "windows", "MediaLinker-Windows-x64.zip", frozen
+        installed = frozen and (Path(sys.executable).resolve().parent / "installed.marker").is_file()
+        if installed:
+            return "windows-installer", "MediaLinker-Setup-x64.exe", True
+        return "windows-portable", "MediaLinker-Windows-x64.zip", frozen
     if sys.platform.startswith("linux"):
         return "linux", "MediaLinker-Linux-x86_64.tar.gz", frozen
     return platform.system().lower() or "unknown", None, False
@@ -88,6 +91,7 @@ def _github_release_fallback() -> dict[str, Any]:
         if not tag_name.lower().startswith("v"):
             raise ValueError("latest release redirect did not contain a version tag")
         asset_names = (
+            "MediaLinker-Setup-x64.exe",
             "MediaLinker-Windows-x64.zip",
             "MediaLinker-Linux-x86_64.tar.gz",
             "MediaLinker-x86_64.flatpak",
@@ -250,6 +254,32 @@ try {{
     return script
 
 
+def _prepare_windows_installer_updater(installer: Path, install_dir: Path) -> Path:
+    updater_dir = Path(tempfile.mkdtemp(prefix="medialinker-installer-"))
+    script = updater_dir / "install-update.ps1"
+    log_file = updater_dir / "update.log"
+    executable = install_dir / "MediaLinker.exe"
+    script.write_text(
+        f"""
+$processId = {os.getpid()}
+$installer = {_quote_powershell(str(installer))}
+$executable = {_quote_powershell(str(executable))}
+$logFile = {_quote_powershell(str(log_file))}
+while (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 500 }}
+try {{
+    $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -Wait -PassThru
+    if ($process.ExitCode -ne 0) {{ throw "安装程序退出代码：$($process.ExitCode)" }}
+    Start-Process -FilePath $executable
+}} catch {{
+    $_ | Out-String | Set-Content -LiteralPath $logFile -Encoding UTF8
+    if (Test-Path -LiteralPath $executable) {{ Start-Process -FilePath $executable }}
+}}
+""".strip(),
+        encoding="utf-8-sig",
+    )
+    return script
+
+
 def _quote_shell(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
@@ -312,12 +342,37 @@ def apply_update() -> dict[str, Any]:
         update_root = Path(tempfile.mkdtemp(prefix="medialinker-update-"))
         platform_name = str(info["platform"])
         archive = update_root / str(info["asset_name"])
-        staging = update_root / "staging"
-        staging.mkdir()
         _download(str(info["asset_url"]), archive)
         _verify_download(archive, int(info["asset_size"]), str(info["asset_digest"]))
 
-        if platform_name == "windows":
+        if platform_name == "windows-installer":
+            script = _prepare_windows_installer_updater(archive, install_dir)
+            creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+                subprocess, "DETACHED_PROCESS", 0
+            )
+            subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                ],
+                creationflags=creation_flags,
+                close_fds=True,
+            )
+            threading.Thread(target=_exit_after_response, daemon=True).start()
+            return {
+                "status": "restarting",
+                "message": "新版安装包已下载，软件即将自动安装并重新启动。",
+                "current_version": __version__,
+                "latest_version": info["latest_version"],
+            }
+
+        staging = update_root / "staging"
+        staging.mkdir()
+        if platform_name == "windows-portable":
             _safe_extract_zip(archive, staging)
             executable_name = "MediaLinker.exe"
         else:
@@ -328,7 +383,7 @@ def apply_update() -> dict[str, Any]:
         if len(candidates) != 1:
             raise HTTPException(status_code=502, detail="更新包结构不正确，已取消自动更新。")
 
-        if platform_name == "windows":
+        if platform_name == "windows-portable":
             script = _prepare_windows_updater(candidates[0], install_dir)
             creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
                 subprocess, "DETACHED_PROCESS", 0

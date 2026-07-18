@@ -8,7 +8,7 @@
 
 ![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Python-009688?logo=fastapi&logoColor=white)
-![Windows](https://img.shields.io/badge/Windows-便携版-0078d4?logo=windows)
+![Windows](https://img.shields.io/badge/Windows-安装版%20%7C%20绿色版-0078d4?logo=windows)
 ![Linux](https://img.shields.io/badge/Linux-构建支持-fcc624?logo=linux&logoColor=black)
 ![Flatpak](https://img.shields.io/badge/Flatpak-构建支持-4a90d9?logo=flatpak&logoColor=white)
 
@@ -51,8 +51,9 @@ MediaLinker 是一个运行在本地的影视文件整理 Web 工具，面向 NA
 - 启动时自动查询 GitHub 最新 Release。
 - 右上角设置中心提供软件信息和手动检查更新。
 - Windows 与 Linux 便携版支持下载、完整性校验、自动替换和重启。
-- 已提供 Windows 免安装便携版构建。
+- 已提供 Windows 标准 EXE 安装包和免安装绿色版。
 - 已提供 Linux x86_64 和 Flatpak 自动构建配置。
+- Windows、Linux 与 Flatpak 均可通过系统窗口选择本地文件夹。
 
 ## 命名规则
 
@@ -105,7 +106,16 @@ Windows 可以使用以下命令查看文件的全部硬链接：
 fsutil hardlink list "完整文件路径"
 ```
 
-## Windows 便携版
+## Windows 安装版（推荐）
+
+1. 下载 `MediaLinker-Setup-x64.exe`。
+2. 双击安装包，按安装向导完成安装。
+3. 从开始菜单或桌面快捷方式启动 MediaLinker。
+4. 如需移除，可在 Windows“设置 → 应用”中正常卸载。
+
+安装版默认安装到当前用户目录，不需要管理员权限。检测到新版本后，会下载新的 EXE 安装包、静默更新并重新启动。
+
+## Windows 绿色版
 
 Windows 便携版不需要安装 Python、Node.js 或其他依赖。
 
@@ -121,11 +131,19 @@ Windows 便携版不需要安装 Python、Node.js 或其他依赖。
 
 MediaLinker 启动后会自动比较本地版本和 GitHub 最新 Release，也可以通过右上角的齿轮按钮进入“软件信息”，手动查询更新。
 
-- Windows 绿色版和 Linux 便携版发现新版本后会自动下载对应平台的发布包。
+- Windows 安装版、绿色版和 Linux 便携版发现新版本后会自动下载对应平台的发布包。
 - 下载完成后会核对 GitHub 提供的文件大小与 SHA-256 摘要，再替换程序并重新启动。
 - 更新时保留本地 `config` 配置目录。
 - 源码开发模式不会覆盖源码，只显示版本状态与 Release 链接。
 - Flatpak 版目前显示新版本和下载入口，由用户安装新的 Flatpak 包。
+
+## Linux 与 Flatpak 文件夹选择
+
+Linux 便携版和 Flatpak 版的“选择文件夹”按钮会直接打开桌面环境提供的文件夹选择窗口，无需复制路径：
+
+- Flatpak 优先使用 XDG Desktop Portal，兼容 GNOME、KDE 等主流桌面。
+- 普通 Linux 依次使用系统门户、Zenity、KDialog 或 Tk 作为回退。
+- 程序仍支持手动输入本地路径或已挂载的 SMB 路径。
 
 自动更新依赖公开可访问的 GitHub Release，并要求程序所在目录具有写入权限。
 

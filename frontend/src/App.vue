@@ -34,7 +34,7 @@ const confirmOriginalChange = ref(false)
 const settingsOpen = ref(false)
 const settingsView = ref('menu')
 const updateInfo = ref({
-  current_version: '0.3.0',
+  current_version: '0.4.0',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
@@ -45,6 +45,13 @@ const updateInfo = ref({
 const updateState = ref('idle')
 const updateMessage = ref('')
 const autoUpdateAttempted = ref(false)
+
+const platformLabel = computed(() => ({
+  'windows-installer': 'Windows 安装版',
+  'windows-portable': 'Windows 绿色版',
+  linux: 'Linux 便携版',
+  flatpak: 'Flatpak',
+}[updateInfo.value.platform] || updateInfo.value.platform || '检测中'))
 
 const selectedFiles = computed(() => files.value.filter((file) => selectedPaths.value.has(file.path)))
 const totalSize = computed(() => selectedFiles.value.reduce((sum, file) => sum + file.size, 0))
@@ -457,7 +464,7 @@ onMounted(() => {
           <div class="version-grid">
             <div><small>本地版本</small><strong>v{{ updateInfo.current_version }}</strong></div>
             <div><small>GitHub 最新版本</small><strong>{{ updateInfo.latest_version ? `v${updateInfo.latest_version}` : '尚未查询' }}</strong></div>
-            <div><small>运行平台</small><strong>{{ updateInfo.platform || '检测中' }}</strong></div>
+            <div><small>运行平台</small><strong>{{ platformLabel }}</strong></div>
           </div>
           <div class="update-status" :class="`state-${updateState}`">
             <span v-if="updateState === 'checking' || updateState === 'downloading'" class="spinner small-spinner"></span>
@@ -468,7 +475,7 @@ onMounted(() => {
             <a v-if="updateInfo.release_url" class="release-link" :href="updateInfo.release_url" target="_blank" rel="noreferrer">查看 Release</a>
             <button class="primary" :disabled="['checking', 'downloading', 'restarting'].includes(updateState)" @click="checkForUpdates({ force: true })">{{ updateState === 'checking' ? '查询中…' : '手动查询更新' }}</button>
           </div>
-          <p class="update-help">绿色版检测到新版本后会自动下载、替换并重新启动。Flatpak 版会显示最新版本和下载入口。</p>
+          <p class="update-help">Windows 安装版、绿色版和 Linux 便携版会自动下载对应更新并重新启动。Flatpak 版会显示最新版本和下载入口。</p>
         </div>
       </section>
     </div>

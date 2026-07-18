@@ -1,7 +1,12 @@
+import asyncio
+import os
+import shutil
+import subprocess
+import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-import tkinter as tk
-from tkinter import filedialog
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -23,29 +28,154 @@ VIDEO_EXTENSIONS = {
 SUBTITLE_EXTENSIONS = {".srt"}
 
 
-@router.post("/pick-directory")
-def pick_directory(purpose: str = Query(default="source", pattern="^(source|target)$")) -> dict[str, str | bool]:
-    """Open the native Windows directory picker on the machine running the API."""
+class DirectoryPickerUnavailable(RuntimeError):
+    pass
+
+
+def _file_uri_to_path(uri: str) -> str:
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        raise DirectoryPickerUnavailable("系统文件选择器返回了不支持的路径格式")
+    return unquote(parsed.path)
+
+
+async def _pick_directory_with_portal(title: str) -> str:
+    try:
+        from dbus_next import BusType, Variant
+        from dbus_next.aio import MessageBus
+    except ImportError as exc:
+        raise DirectoryPickerUnavailable("未安装 Linux 文件选择门户组件") from exc
+
+    bus = None
+    try:
+        bus = await MessageBus(bus_type=BusType.SESSION).connect()
+        desktop_path = "/org/freedesktop/portal/desktop"
+        introspection = await bus.introspect("org.freedesktop.portal.Desktop", desktop_path)
+        proxy = bus.get_proxy_object("org.freedesktop.portal.Desktop", desktop_path, introspection)
+        chooser = proxy.get_interface("org.freedesktop.portal.FileChooser")
+        token = f"medialinker_{uuid.uuid4().hex}"
+        handle = await chooser.call_open_file(
+            "",
+            title,
+            {
+                "handle_token": Variant("s", token),
+                "accept_label": Variant("s", "选择"),
+                "modal": Variant("b", True),
+                "multiple": Variant("b", False),
+                "directory": Variant("b", True),
+            },
+        )
+
+        request_introspection = await bus.introspect("org.freedesktop.portal.Desktop", handle)
+        request_proxy = bus.get_proxy_object(
+            "org.freedesktop.portal.Desktop", handle, request_introspection
+        )
+        request = request_proxy.get_interface("org.freedesktop.portal.Request")
+        loop = asyncio.get_running_loop()
+        response_future: asyncio.Future[tuple[int, dict[str, object]]] = loop.create_future()
+
+        def receive_response(response: int, results: dict[str, object]) -> None:
+            if not response_future.done():
+                response_future.set_result((response, results))
+
+        request.on_response(receive_response)
+        response, results = await asyncio.wait_for(response_future, timeout=300)
+        if response != 0:
+            return ""
+        uri_value = results.get("uris")
+        uris = getattr(uri_value, "value", uri_value) or []
+        if not uris:
+            return ""
+        return _file_uri_to_path(str(uris[0]))
+    except asyncio.TimeoutError as exc:
+        raise DirectoryPickerUnavailable("系统文件夹选择窗口等待超时") from exc
+    except DirectoryPickerUnavailable:
+        raise
+    except Exception as exc:
+        raise DirectoryPickerUnavailable("无法连接 Linux 系统文件选择门户") from exc
+    finally:
+        if bus is not None:
+            bus.disconnect()
+
+
+def _pick_directory_with_linux_command(title: str) -> str:
+    if zenity := shutil.which("zenity"):
+        result = subprocess.run(
+            [zenity, "--file-selection", "--directory", f"--title={title}"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    elif kdialog := shutil.which("kdialog"):
+        result = subprocess.run(
+            [kdialog, "--getexistingdirectory", str(Path.home()), "--title", title],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            check=False,
+        )
+    else:
+        raise DirectoryPickerUnavailable("未找到可用的 Linux 图形文件夹选择器")
+    if result.returncode == 0:
+        return result.stdout.strip()
+    if result.returncode == 1:
+        return ""
+    raise DirectoryPickerUnavailable(result.stderr.strip() or "Linux 文件夹选择器启动失败")
+
+
+def _pick_directory_with_tk(title: str) -> str:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError as exc:
+        raise DirectoryPickerUnavailable("当前程序未包含 Tk 图形组件") from exc
+
     root = None
     try:
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
         root.update()
-        selected = filedialog.askdirectory(
-            parent=root,
-            title="选择硬链接输出文件夹" if purpose == "target" else "选择需要扫描的影视文件夹",
-            mustexist=True,
-        )
-        return {"selected": bool(selected), "path": selected}
+        return filedialog.askdirectory(parent=root, title=title, mustexist=True)
     except tk.TclError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="无法打开系统文件夹选择窗口，请确认程序正在图形桌面会话中运行",
-        ) from exc
+        raise DirectoryPickerUnavailable("无法打开 Tk 文件夹选择窗口") from exc
     finally:
         if root is not None:
             root.destroy()
+
+
+@router.post("/pick-directory")
+def pick_directory(purpose: str = Query(default="source", pattern="^(source|target)$")) -> dict[str, str | bool]:
+    """Open a native directory picker on the machine running the API."""
+    title = "选择硬链接输出文件夹" if purpose == "target" else "选择需要扫描的影视文件夹"
+    errors = []
+
+    if sys.platform.startswith("linux"):
+        try:
+            selected = asyncio.run(_pick_directory_with_portal(title))
+            return {"selected": bool(selected), "path": selected}
+        except DirectoryPickerUnavailable as exc:
+            errors.append(str(exc))
+
+        if not os.environ.get("FLATPAK_ID"):
+            try:
+                selected = _pick_directory_with_linux_command(title)
+                return {"selected": bool(selected), "path": selected}
+            except (DirectoryPickerUnavailable, subprocess.TimeoutExpired) as exc:
+                errors.append(str(exc))
+
+    try:
+        selected = _pick_directory_with_tk(title)
+        return {"selected": bool(selected), "path": selected}
+    except DirectoryPickerUnavailable as exc:
+        errors.append(str(exc))
+
+    detail = "；".join(error for error in errors if error)
+    raise HTTPException(
+        status_code=500,
+        detail=f"无法打开系统文件夹选择窗口，请确认程序正在图形桌面会话中运行。{detail}",
+    )
 
 
 @router.post("/scan", response_model=ScanResponse)
