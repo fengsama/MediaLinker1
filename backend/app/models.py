@@ -19,6 +19,8 @@ class VideoFile(BaseModel):
     extension: str
     size: int
     modified_at: str
+    detected_season: int | None = None
+    detected_episode: int | None = None
     subtitles: list[SubtitleFile] = Field(default_factory=list)
 
 

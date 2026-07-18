@@ -12,6 +12,11 @@ backend/.venv-linux/bin/python -m pip install --upgrade pip
 backend/.venv-linux/bin/python -m pip install -r backend/requirements.txt pyinstaller
 
 (
+  cd backend
+  .venv-linux/bin/python -m unittest discover -s tests -v
+)
+
+(
   cd frontend
   npm ci
   npm run build

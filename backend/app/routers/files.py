@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,21 @@ SUBTITLE_EXTENSIONS = {
     ".psb",
 }
 SUBTITLE_SUFFIX_SEPARATORS = (".", "_", "-", " ", "[", "(")
+EPISODE_PATTERNS = (
+    re.compile(
+        r"(?:^|[.\s_\-\[(])s(?P<season>\d{1,2})[.\s_\-]*e(?P<episode>\d{1,4})(?:v\d+)?(?=$|[.\s_\-\])])",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:^|[.\s_\-\[(])(?:ep(?:isode)?|e)[.\s_\-]*(?P<episode>\d{1,4})(?:v\d+)?(?=$|[.\s_\-\])])",
+        re.IGNORECASE,
+    ),
+    re.compile(r"第\s*(?P<episode>\d{1,4})\s*[集话話]", re.IGNORECASE),
+)
+SEASON_PATTERN = re.compile(
+    r"(?:^|[.\s_\-\[(])(?:season|s)[.\s_\-]*(?P<season>\d{1,2})(?=$|[.\s_\-\])])",
+    re.IGNORECASE,
+)
 
 
 class DirectoryPickerUnavailable(RuntimeError):
@@ -65,6 +81,29 @@ def _subtitle_matches_video(video_stem: str, subtitle_stem: str) -> bool:
         return False
     suffix = normalized_subtitle[len(normalized_video) :]
     return suffix.startswith(SUBTITLE_SUFFIX_SEPARATORS)
+
+
+def _detect_episode(filename: str) -> tuple[int | None, int | None]:
+    stem = Path(filename).stem
+    for pattern in EPISODE_PATTERNS:
+        match = pattern.search(stem)
+        if not match:
+            continue
+        groups = match.groupdict()
+        season = int(groups["season"]) if groups.get("season") else None
+        episode = int(groups["episode"])
+        return season, episode
+    season_match = SEASON_PATTERN.search(stem)
+    season = int(season_match.group("season")) if season_match else None
+    return season, None
+
+
+def _natural_key(value: str) -> tuple[tuple[int, object], ...]:
+    return tuple(
+        (1, int(part)) if part.isdigit() else (0, part.casefold())
+        for part in re.split(r"(\d+)", value)
+        if part
+    )
 
 
 def _file_uri_to_path(uri: str) -> str:
@@ -236,7 +275,8 @@ def scan_video_files(request: ScanRequest) -> ScanResponse:
             if path.suffix.lower() not in VIDEO_EXTENSIONS:
                 continue
             stat = path.stat()
-            video_stem = path.stem.casefold()
+            video_stem = path.stem
+            detected_season, detected_episode = _detect_episode(path.name)
             matched_subtitles = []
             for subtitle in subtitles_by_directory.get(path.parent, []):
                 if not _subtitle_matches_video(video_stem, subtitle.stem):
@@ -260,6 +300,8 @@ def scan_video_files(request: ScanRequest) -> ScanResponse:
                     modified_at=datetime.fromtimestamp(
                         stat.st_mtime, tz=timezone.utc
                     ).isoformat(),
+                    detected_season=detected_season,
+                    detected_episode=detected_episode,
                     subtitles=matched_subtitles,
                 )
             )
@@ -268,5 +310,5 @@ def scan_video_files(request: ScanRequest) -> ScanResponse:
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"扫描目录失败：{exc}") from exc
 
-    files.sort(key=lambda item: item.path.casefold())
+    files.sort(key=lambda item: _natural_key(item.path))
     return ScanResponse(root=str(root.resolve()), count=len(files), files=files)

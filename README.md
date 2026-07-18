@@ -39,14 +39,18 @@ MediaLinker 是一个运行在本地的影视文件整理 Web 工具，面向 NA
 - 调用系统原生文件夹选择窗口，无需手动复制路径。
 - 递归扫描 MKV、MP4、AVI、MOV、WMV、M4V、TS、WEBM。
 - 扫描后手动勾选需要整理的视频，支持全选和取消全选。
-- 自动关联同目录、同名的 SRT 字幕。
-- 支持 `.chs`、`.zh-CN` 等字幕语言后缀。
+- 自动关联同目录、同名的常见文本与图形字幕。
+- 支持 SRT、ASS、SSA、VTT、SUB/IDX、SUP、SMI、TTML、STL 等格式及语言后缀。
 - 通过 TMDB 搜索简体中文电影和电视剧资料。
 - 搜索结果以悬浮列表展示，选择后自动填充名称、年份和类型。
+- 自动识别 `S01E02`、`EP03`、`E04`、`第5集` 等季集编号并自然排序。
+- 支持逐文件修改季数与集数，提示重复、缺失和未识别项目。
 - 自动生成电视剧季目录、集数编号和规范文件名。
 - 执行前预览所有视频与字幕的目标名称。
 - 支持创建真正的文件系统硬链接。
 - 支持移动并重命名原文件，并提供风险确认。
+- 记录整理任务历史，支持删除本次硬链接或将移动改名操作回滚到原位置。
+- 执行或撤销中途失败时自动恢复到操作前状态。
 - 自动记住上次选择的输出目录。
 - 启动时自动查询 GitHub 最新 Release。
 - 右上角设置中心提供软件信息和手动检查更新。
@@ -84,12 +88,15 @@ TV Shows/
 
 ## 字幕自动关联
 
-扫描视频时，MediaLinker 会在视频所在目录查找同名 SRT 字幕：
+扫描视频时，MediaLinker 会在视频所在目录查找同名字幕：
 
 ```text
 Movie.mkv          → Movie.srt
 Movie.mkv          → Movie.chs.srt
 Movie.mkv          → Movie.zh-CN.srt
+Movie.mkv          → Movie_chs.ass
+Movie.mkv          → Movie-forced.vtt
+Movie.mkv          → Movie.idx + Movie.sub
 ```
 
 无关字幕不会自动关联。生成链接或移动文件时，字幕会跟随对应视频使用相同的新名称，并保留语言后缀。
@@ -298,6 +305,8 @@ MediaLinker/
 | `POST` | `/api/metadata/config` | 验证并保存 TMDB Token |
 | `GET` | `/api/metadata/search` | 搜索中文影视资料 |
 | `POST` | `/api/organizer/execute` | 创建硬链接或移动重命名 |
+| `GET` | `/api/organizer/history` | 查询整理任务历史 |
+| `POST` | `/api/organizer/history/{task_id}/undo` | 撤销硬链接或回滚移动改名 |
 | `GET` | `/api/update/check` | 比较本地与 GitHub 最新版本 |
 | `POST` | `/api/update/apply` | 下载、校验并安装便携版更新 |
 
@@ -307,6 +316,8 @@ MediaLinker/
 - 移动并重命名模式需要额外风险确认。
 - 目标文件已存在时拒绝覆盖。
 - 批量处理中途失败时尝试回滚本次操作。
+- 撤销前校验文件身份，目标被替换或原位置冲突时拒绝危险操作。
+- 任务历史以 UTF-8 JSON 保存在本地 `config/task-history.json`。
 - 目录和文件名经过 Windows 非法字符检查。
 - TMDB Token 只保存在本地配置中。
 - 服务默认仅监听 `127.0.0.1`，不会直接暴露到局域网或互联网。
@@ -317,17 +328,16 @@ MediaLinker/
 - 硬链接无法跨磁盘分区或跨文件系统创建。
 - SMB/NAS 是否支持硬链接取决于服务器文件系统和共享配置。
 - 系统文件夹选择窗口要求程序运行在图形桌面会话中。
-- 当前只自动关联 SRT 字幕。
 - Flatpak 为整理任意媒体目录需要较宽的主机文件访问权限。
 - Flatpak 暂不直接替换自身，发现更新后需要安装新的 Flatpak 发布包。
 
 ## 路线图
 
-- [ ] 支持 ASS、SSA、SUP 等更多字幕格式。
-- [ ] 从原文件名自动识别季、集数和版本信息。
-- [ ] 支持逐集手动调整编号。
+- [x] 支持 ASS、SSA、SUP 等更多字幕格式。
+- [x] 从原文件名自动识别季、集数。
+- [x] 支持逐集手动调整编号。
 - [ ] 下载海报、背景图并生成 NFO。
-- [ ] 任务历史、撤销与操作日志。
+- [x] 任务历史、撤销与失败回滚。
 - [ ] qBittorrent 下载完成后自动整理。
 - [ ] NAS/服务器端网页目录浏览器。
 - [ ] Docker 部署版本。

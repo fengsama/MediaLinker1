@@ -29,6 +29,9 @@ jobs:
       - name: Build Windows application
         run: |
           python -m pip install -r backend/requirements.txt pyinstaller
+          Push-Location backend
+          python -m unittest discover -s tests -v
+          Pop-Location
           python -m PyInstaller --noconfirm --clean MediaLinker.spec
           New-Item -ItemType Directory -Path release -Force | Out-Null
           Compress-Archive -Path dist\MediaLinker -DestinationPath release\MediaLinker-Windows-x64.zip -Force

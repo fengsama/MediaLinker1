@@ -15,6 +15,7 @@ const title = ref('')
 const year = ref('')
 const season = ref(1)
 const startEpisode = ref(1)
+const episodeAssignments = ref({})
 const metadataOpen = ref(false)
 const metadataLoading = ref(false)
 const metadataResults = ref([])
@@ -33,8 +34,12 @@ const operationMode = ref('hardlink')
 const confirmOriginalChange = ref(false)
 const settingsOpen = ref(false)
 const settingsView = ref('menu')
+const taskHistory = ref([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const undoingTaskId = ref('')
 const updateInfo = ref({
-  current_version: '0.5.1',
+  current_version: '0.6.0',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
@@ -79,6 +84,41 @@ const selectedFiles = computed(() => files.value.filter((file) => selectedPaths.
 const totalSize = computed(() => selectedFiles.value.reduce((sum, file) => sum + file.size, 0))
 const allSelected = computed(() => files.value.length > 0 && selectedPaths.value.size === files.value.length)
 const selectedSubtitleCount = computed(() => selectedFiles.value.reduce((sum, file) => sum + (file.subtitles?.length || 0), 0))
+const episodeDiagnostics = computed(() => {
+  if (mediaType.value !== 'tv') return { invalid: false, duplicates: new Set(), messages: [] }
+  const counts = new Map()
+  const duplicates = new Set()
+  const seasons = new Map()
+  let invalid = false
+  let sequentialCount = 0
+  selectedFiles.value.forEach((file) => {
+    const assignment = episodeAssignments.value[file.path]
+    if (!assignment || !Number.isInteger(assignment.season) || assignment.season < 0 || !Number.isInteger(assignment.episode) || assignment.episode < 1) {
+      invalid = true
+      return
+    }
+    const key = `${assignment.season}-${assignment.episode}`
+    counts.set(key, (counts.get(key) || 0) + 1)
+    if (!seasons.has(assignment.season)) seasons.set(assignment.season, [])
+    seasons.get(assignment.season).push(assignment.episode)
+    if (assignment.source === 'sequence' && !assignment.manual) sequentialCount += 1
+  })
+  counts.forEach((count, key) => { if (count > 1) duplicates.add(key) })
+  const messages = []
+  if (invalid) messages.push('存在无效的季数或集数，请修正后继续。')
+  if (duplicates.size) messages.push(`发现 ${duplicates.size} 组重复集数，请修改标红项目。`)
+  if (sequentialCount) messages.push(`${sequentialCount} 个文件未识别到集数，已按当前顺序自动编号。`)
+  seasons.forEach((episodes, seasonNumber) => {
+    const unique = [...new Set(episodes)].sort((a, b) => a - b)
+    if (unique.length < 2) return
+    const missing = []
+    for (let value = unique[0]; value <= unique[unique.length - 1]; value += 1) {
+      if (!unique.includes(value)) missing.push(value)
+    }
+    if (missing.length) messages.push(`第 ${seasonNumber} 季编号中缺少：${missing.slice(0, 12).join('、')}${missing.length > 12 ? '…' : ''}`)
+  })
+  return { invalid, duplicates, messages }
+})
 const previews = computed(() => selectedFiles.value.map((file, index) => {
   const safeTitle = sanitizeName(title.value.trim())
   if (mediaType.value === 'movie') {
@@ -86,8 +126,9 @@ const previews = computed(() => selectedFiles.value.map((file, index) => {
     const targetName = `${displayTitle}${file.extension}`
     return { ...file, episode: null, targetName, targetFolder: displayTitle, targetParts: [displayTitle], subtitleTargets: buildSubtitleTargets(file, targetName) }
   }
-  const seasonNumber = String(season.value || 0).padStart(2, '0')
-  const episodeNumber = String((startEpisode.value || 1) + index).padStart(2, '0')
+  const assignment = episodeAssignments.value[file.path] || { season: Number(season.value) || 0, episode: (Number(startEpisode.value) || 1) + index }
+  const seasonNumber = String(assignment.season).padStart(2, '0')
+  const episodeNumber = String(assignment.episode).padStart(2, '0')
   const showFolder = `${safeTitle}${year.value ? ` (${year.value})` : ''}`
   const seasonFolder = `Season ${seasonNumber}`
   const targetName = `${safeTitle} S${seasonNumber}E${episodeNumber}${file.extension}`
@@ -112,6 +153,51 @@ function buildSubtitleTargets(file, videoTargetName) {
   })
 }
 
+function prepareEpisodeAssignments(force = false) {
+  if (mediaType.value !== 'tv') return
+  const next = {}
+  let cursor = Math.max(1, Number(startEpisode.value) || 1)
+  selectedFiles.value.forEach((file) => {
+    const existing = episodeAssignments.value[file.path]
+    if (!force && existing?.manual) {
+      next[file.path] = existing
+      cursor = Math.max(cursor, (Number(existing.episode) || 0) + 1)
+      return
+    }
+    const detectedEpisode = Number.isInteger(file.detected_episode) ? file.detected_episode : null
+    const detectedSeason = Number.isInteger(file.detected_season) ? file.detected_season : null
+    const episode = detectedEpisode ?? cursor
+    next[file.path] = {
+      season: detectedSeason ?? Math.max(0, Number(season.value) || 0),
+      episode,
+      source: detectedEpisode === null ? 'sequence' : 'detected',
+      manual: false,
+    }
+    cursor = Math.max(cursor, episode + 1)
+  })
+  episodeAssignments.value = next
+}
+
+function updateEpisodeAssignment(path, field, event) {
+  const current = episodeAssignments.value[path] || { season: 0, episode: 1, source: 'sequence' }
+  episodeAssignments.value = {
+    ...episodeAssignments.value,
+    [path]: { ...current, [field]: Number(event.target.value), manual: true, source: 'manual' },
+  }
+}
+
+function episodeKey(path) {
+  const assignment = episodeAssignments.value[path]
+  return assignment ? `${assignment.season}-${assignment.episode}` : ''
+}
+
+function episodeSourceLabel(file) {
+  const assignment = episodeAssignments.value[file.path]
+  if (assignment?.manual) return '手动设置'
+  if (assignment?.source === 'detected') return '文件名识别'
+  return '自动顺排'
+}
+
 function formatSize(bytes) {
   if (!bytes) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -122,6 +208,51 @@ function formatSize(bytes) {
 function openSettings() {
   settingsView.value = 'menu'
   settingsOpen.value = true
+}
+
+function formatHistoryTime(value) {
+  if (!value) return '时间未知'
+  return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+}
+
+function historyStatusLabel(status) {
+  return ({ completed: '可撤销', undone: '已撤销', failed: '执行失败' })[status] || status
+}
+
+async function loadTaskHistory() {
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const response = await fetch('/api/organizer/history?limit=100')
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '读取任务历史失败')
+    taskHistory.value = data.tasks
+  } catch (requestError) {
+    historyError.value = requestError.message || '读取任务历史失败。'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function openTaskHistory() {
+  settingsView.value = 'history'
+  await loadTaskHistory()
+}
+
+async function undoHistoryTask(task) {
+  if (!window.confirm(`确认撤销“${task.title}”的 ${task.item_count} 个文件操作吗？`)) return
+  undoingTaskId.value = task.id
+  historyError.value = ''
+  try {
+    const response = await fetch(`/api/organizer/history/${encodeURIComponent(task.id)}/undo`, { method: 'POST' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '撤销失败')
+    await loadTaskHistory()
+  } catch (requestError) {
+    historyError.value = requestError.message || '撤销任务失败。'
+  } finally {
+    undoingTaskId.value = ''
+  }
 }
 
 async function pollUpdateStatus() {
@@ -253,6 +384,7 @@ async function scanFiles() {
   error.value = ''
   files.value = []
   selectedPaths.value = new Set()
+  episodeAssignments.value = {}
   if (!sourcePath.value.trim()) { error.value = '请输入需要扫描的目录。'; return }
   loading.value = true
   try {
@@ -268,6 +400,7 @@ async function scanFiles() {
 function goNext() {
   if (!selectedFiles.value.length) { error.value = '请至少选择一个影视文件。'; return }
   error.value = ''
+  prepareEpisodeAssignments(true)
   step.value = 2
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -276,6 +409,10 @@ function buildPreview() {
   error.value = ''
   if (!title.value.trim()) { error.value = '请输入影视名称后再生成预览。'; return }
   if (mediaType.value === 'movie' && selectedFiles.value.length > 1) { error.value = '电影模式一次只能选择一个视频文件，请返回扫描页调整选择。'; return }
+  if (mediaType.value === 'tv') {
+    prepareEpisodeAssignments(false)
+    if (episodeDiagnostics.value.invalid || episodeDiagnostics.value.duplicates.size) { error.value = '请先修正集数设置中的错误。'; return }
+  }
   step.value = 3
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
@@ -314,6 +451,8 @@ async function createLinks() {
         target_root: targetPath.value.trim(),
         items: linkItems.value,
         mode: operationMode.value,
+        title: title.value.trim(),
+        media_type: mediaType.value,
       }),
     })
     const data = await response.json()
@@ -391,6 +530,8 @@ watch(targetPath, (value) => {
   if (normalized) localStorage.setItem('media-linker-output-path', normalized)
 })
 watch(operationMode, () => { confirmOriginalChange.value = false; linkError.value = ''; linkResult.value = null })
+watch([season, startEpisode], () => { if (step.value >= 2 && mediaType.value === 'tv') prepareEpisodeAssignments(false) })
+watch(mediaType, (value) => { if (value === 'tv' && step.value >= 2) prepareEpisodeAssignments(false) })
 
 onMounted(() => {
   connectLifecycle()
@@ -448,7 +589,12 @@ onMounted(() => {
           <label v-if="mediaType === 'tv'"><span>季数</span><input v-model.number="season" type="number" min="0" /></label>
           <label v-if="mediaType === 'tv'"><span>起始集数</span><input v-model.number="startEpisode" type="number" min="1" /></label>
         </div>
-        <div class="notice">系统将按照扫描结果中的文件顺序，从起始集数开始依次编号。下一步可逐项核对目标文件名。</div>
+        <div v-if="mediaType === 'tv'" class="episode-editor">
+          <div class="episode-editor-header"><div><strong>逐文件季集设置</strong><small>优先识别文件名，未识别项目按当前顺序编号</small></div><button class="text-button" @click="prepareEpisodeAssignments(true)">重新自动识别</button></div>
+          <div v-if="episodeDiagnostics.messages.length" class="episode-warnings"><p v-for="message in episodeDiagnostics.messages" :key="message">{{ message }}</p></div>
+          <div class="table-wrap episode-table"><table><thead><tr><th>原文件名</th><th>识别方式</th><th>季</th><th>集</th></tr></thead><tbody><tr v-for="file in selectedFiles" :key="file.path" :class="{ 'episode-conflict': episodeDiagnostics.duplicates.has(episodeKey(file.path)) }"><td class="filename">{{ file.name }}</td><td><span class="episode-source" :class="episodeAssignments[file.path]?.source">{{ episodeSourceLabel(file) }}</span></td><td><input type="number" min="0" :value="episodeAssignments[file.path]?.season" @input="updateEpisodeAssignment(file.path, 'season', $event)" /></td><td><input type="number" min="1" :value="episodeAssignments[file.path]?.episode" @input="updateEpisodeAssignment(file.path, 'episode', $event)" /></td></tr></tbody></table></div>
+        </div>
+        <div class="notice">系统会自然排序文件名并自动识别季集编号；进入下一步前仍可逐项校正。</div>
         <div class="actions"><button class="secondary" @click="step = 1; error = ''">← 返回选择文件</button><button class="primary" @click="buildPreview">下一步：生成重命名预览 →</button></div>
       </section>
 
@@ -471,7 +617,7 @@ onMounted(() => {
         </div>
         <div class="summary"><div><small>准备处理</small><strong>{{ linkItems.length }} 个文件</strong></div><div><small>视频 / 字幕</small><strong>{{ previews.length }} / {{ selectedSubtitleCount }}</strong></div><div><small>原文件</small><strong>{{ operationMode === 'hardlink' ? '保持不变' : '移动并改名' }}</strong></div></div>
         <p v-if="linkError" class="error">{{ linkError }}</p>
-        <div v-if="linkResult" class="success-message"><strong>{{ operationMode === 'hardlink' ? '硬链接创建完成' : '原文件移动并重命名完成' }}</strong><span>已成功处理 {{ linkResult.completed_count }} 个文件。</span></div>
+        <div v-if="linkResult" class="success-message"><strong>{{ operationMode === 'hardlink' ? '硬链接创建完成' : '原文件移动并重命名完成' }}</strong><span>已成功处理 {{ linkResult.completed_count }} 个文件，任务已记录，可在“设置 → 任务历史”中撤销。</span></div>
         <div v-if="operationMode === 'hardlink'" class="notice"><strong>硬链接限制：</strong>来源文件和输出目录必须位于同一磁盘分区或同一 NAS 文件系统。已有同名目标文件时系统不会覆盖。</div>
         <div v-else class="danger-notice"><strong>注意：</strong>此操作会改变原始视频和字幕的位置及名称，可能导致正在做种的任务丢失文件。<label><input v-model="confirmOriginalChange" type="checkbox" /> 我确认移动并重命名原文件</label></div>
         <div class="output-preview"><small>预计输出示例</small><code v-if="previews.length">{{ targetPath || '输出根目录' }}\{{ previews[0].targetParts.join('\\') }}\{{ previews[0].targetName }}</code></div>
@@ -507,15 +653,34 @@ onMounted(() => {
     <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
       <section class="settings-modal" role="dialog" aria-modal="true" aria-label="软件设置">
         <header class="modal-header">
-          <div><span>MEDIA LINKER · 设置</span><h2>{{ settingsView === 'menu' ? '设置' : '软件信息' }}</h2><p>{{ settingsView === 'menu' ? '管理 MediaLinker 的软件选项' : '版本信息与在线更新' }}</p></div>
+          <div><span>MEDIA LINKER · 设置</span><h2>{{ settingsView === 'menu' ? '设置' : (settingsView === 'history' ? '任务历史' : '软件信息') }}</h2><p>{{ settingsView === 'menu' ? '管理 MediaLinker 的软件选项' : (settingsView === 'history' ? '查看和撤销文件整理操作' : '版本信息与在线更新') }}</p></div>
           <button class="close-button" aria-label="关闭设置" @click="settingsOpen = false">×</button>
         </header>
         <div v-if="settingsView === 'menu'" class="settings-menu">
+          <button class="settings-option" @click="openTaskHistory">
+            <span class="settings-option-icon history-icon">↶</span>
+            <span><strong>任务历史</strong><small>查看已执行任务，撤销硬链接或回滚移动改名</small></span>
+            <b>›</b>
+          </button>
           <button class="settings-option" @click="settingsView = 'about'">
             <span class="settings-option-icon">i</span>
             <span><strong>软件信息</strong><small>查看版本号、检查更新和发布信息</small></span>
             <b>›</b>
           </button>
+        </div>
+        <div v-else-if="settingsView === 'history'" class="history-view">
+          <button class="settings-back" @click="settingsView = 'menu'">← 返回设置</button>
+          <p v-if="historyError" class="error">{{ historyError }}</p>
+          <div v-if="historyLoading" class="history-state"><span class="spinner"></span><p>正在读取任务历史…</p></div>
+          <div v-else-if="!taskHistory.length" class="history-state"><p>还没有整理任务记录。</p></div>
+          <div v-else class="history-list">
+            <article v-for="task in taskHistory" :key="task.id" class="history-card">
+              <div class="history-card-main"><div><strong>{{ task.title }}</strong><span>{{ formatHistoryTime(task.created_at) }} · {{ task.mode === 'hardlink' ? '硬链接' : '移动改名' }} · {{ task.item_count }} 个文件</span></div><span class="history-status" :class="`status-${task.status}`">{{ historyStatusLabel(task.status) }}</span></div>
+              <p v-if="task.error" class="history-task-error">{{ task.error }}</p>
+              <details><summary>查看文件明细</summary><div class="history-items"><div v-for="item in task.items" :key="item.target_path"><span>{{ item.source_path }}</span><b>→</b><span>{{ item.target_path }}</span></div></div></details>
+              <button v-if="task.status === 'completed'" class="undo-button" :disabled="undoingTaskId === task.id" @click="undoHistoryTask(task)">{{ undoingTaskId === task.id ? '正在撤销…' : (task.mode === 'hardlink' ? '删除本次硬链接' : '回滚到原位置') }}</button>
+            </article>
+          </div>
         </div>
         <div v-else class="about-view">
           <button class="settings-back" @click="settingsView = 'menu'">← 返回设置</button>
