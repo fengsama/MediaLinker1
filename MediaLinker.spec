@@ -34,6 +34,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    icon="assets/MediaLinker.ico" if sys.platform == "win32" else None,
     console=sys.platform != "win32",
     disable_windowed_traceback=False,
 )

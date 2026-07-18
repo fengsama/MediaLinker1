@@ -34,7 +34,7 @@ const confirmOriginalChange = ref(false)
 const settingsOpen = ref(false)
 const settingsView = ref('menu')
 const updateInfo = ref({
-  current_version: '0.4.1',
+  current_version: '0.4.2',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
