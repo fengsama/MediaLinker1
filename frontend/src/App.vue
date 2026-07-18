@@ -34,7 +34,7 @@ const confirmOriginalChange = ref(false)
 const settingsOpen = ref(false)
 const settingsView = ref('menu')
 const updateInfo = ref({
-  current_version: '0.5.0',
+  current_version: '0.5.1',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
@@ -426,12 +426,12 @@ onMounted(() => {
           <label class="check"><input v-model="recursive" type="checkbox" /> 扫描所有子目录</label>
         </form>
         <p v-if="error" class="error">{{ error }}</p>
-        <div class="summary"><div><small>发现视频</small><strong>{{ files.length }}</strong></div><div><small>已选择</small><strong>{{ selectedFiles.length }} 个 · {{ formatSize(totalSize) }}</strong></div><div><small>自动关联字幕</small><strong>{{ selectedSubtitleCount }} 个 SRT</strong></div></div>
+        <div class="summary"><div><small>发现视频</small><strong>{{ files.length }}</strong></div><div><small>已选择</small><strong>{{ selectedFiles.length }} 个 · {{ formatSize(totalSize) }}</strong></div><div><small>自动关联字幕</small><strong>{{ selectedSubtitleCount }} 个</strong></div></div>
         <div v-if="files.length" class="selection-tools"><span>默认不选择文件，请勾选本次需要整理的项目。</span><div><button class="text-button" @click="selectedPaths = new Set(files.map((file) => file.path))">全选</button><button class="text-button" @click="selectedPaths = new Set()">取消全选</button></div></div>
         <div class="table-wrap">
           <table v-if="files.length">
             <thead><tr><th class="select-cell"><input type="checkbox" :checked="allSelected" @change="toggleAll" /></th><th>文件名</th><th>格式</th><th>字幕</th><th>大小</th><th>完整路径</th></tr></thead>
-            <tbody><tr v-for="file in files" :key="file.path" :class="{ chosen: selectedPaths.has(file.path) }" @click="toggleFile(file.path)"><td class="select-cell"><input type="checkbox" :checked="selectedPaths.has(file.path)" @click.stop @change="toggleFile(file.path)" /></td><td class="filename">{{ file.name }}</td><td>{{ file.extension }}</td><td><span v-if="file.subtitles?.length" class="subtitle-badge">{{ file.subtitles.length }} 个 SRT</span><span v-else>—</span></td><td>{{ formatSize(file.size) }}</td><td class="path">{{ file.path }}</td></tr></tbody>
+            <tbody><tr v-for="file in files" :key="file.path" :class="{ chosen: selectedPaths.has(file.path) }" @click="toggleFile(file.path)"><td class="select-cell"><input type="checkbox" :checked="selectedPaths.has(file.path)" @click.stop @change="toggleFile(file.path)" /></td><td class="filename">{{ file.name }}</td><td>{{ file.extension }}</td><td><span v-if="file.subtitles?.length" class="subtitle-badge">{{ file.subtitles.length }} 个字幕</span><span v-else>—</span></td><td>{{ formatSize(file.size) }}</td><td class="path">{{ file.path }}</td></tr></tbody>
           </table>
           <div v-else class="empty"><span>▶</span><p>输入目录并开始扫描</p><small>支持 MKV、MP4、AVI、MOV、WMV、M4V、TS、WEBM</small></div>
         </div>

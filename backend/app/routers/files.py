@@ -25,11 +25,46 @@ VIDEO_EXTENSIONS = {
     ".ts",
     ".webm",
 }
-SUBTITLE_EXTENSIONS = {".srt"}
+SUBTITLE_EXTENSIONS = {
+    ".srt",
+    ".ass",
+    ".ssa",
+    ".vtt",
+    ".sub",
+    ".idx",
+    ".sup",
+    ".smi",
+    ".sami",
+    ".ttml",
+    ".dfxp",
+    ".stl",
+    ".sbv",
+    ".mpl",
+    ".mpl2",
+    ".usf",
+    ".jss",
+    ".rt",
+    ".aqt",
+    ".pjs",
+    ".psb",
+}
+SUBTITLE_SUFFIX_SEPARATORS = (".", "_", "-", " ", "[", "(")
 
 
 class DirectoryPickerUnavailable(RuntimeError):
     pass
+
+
+def _subtitle_matches_video(video_stem: str, subtitle_stem: str) -> bool:
+    """Match exact names and common language/variant suffixes without prefix collisions."""
+    normalized_video = video_stem.casefold()
+    normalized_subtitle = subtitle_stem.casefold()
+    if normalized_subtitle == normalized_video:
+        return True
+    if not normalized_subtitle.startswith(normalized_video):
+        return False
+    suffix = normalized_subtitle[len(normalized_video) :]
+    return suffix.startswith(SUBTITLE_SUFFIX_SEPARATORS)
 
 
 def _file_uri_to_path(uri: str) -> str:
@@ -204,8 +239,7 @@ def scan_video_files(request: ScanRequest) -> ScanResponse:
             video_stem = path.stem.casefold()
             matched_subtitles = []
             for subtitle in subtitles_by_directory.get(path.parent, []):
-                subtitle_stem = subtitle.stem.casefold()
-                if subtitle_stem != video_stem and not subtitle_stem.startswith(f"{video_stem}."):
+                if not _subtitle_matches_video(video_stem, subtitle.stem):
                     continue
                 subtitle_stat = subtitle.stat()
                 matched_subtitles.append(
