@@ -48,6 +48,9 @@ MediaLinker 是一个运行在本地的影视文件整理 Web 工具，面向 NA
 - 支持创建真正的文件系统硬链接。
 - 支持移动并重命名原文件，并提供风险确认。
 - 自动记住上次选择的输出目录。
+- 启动时自动查询 GitHub 最新 Release。
+- 右上角设置中心提供软件信息和手动检查更新。
+- Windows 与 Linux 便携版支持下载、完整性校验、自动替换和重启。
 - 已提供 Windows 免安装便携版构建。
 - 已提供 Linux x86_64 和 Flatpak 自动构建配置。
 
@@ -113,6 +116,18 @@ Windows 便携版不需要安装 Python、Node.js 或其他依赖。
 5. 关闭运行窗口即可停止服务。
 
 请复制整个 `MediaLinker` 文件夹，不要只复制 EXE。建议将程序放在普通可写目录，避免放入 `Program Files`。
+
+## 软件更新
+
+MediaLinker 启动后会自动比较本地版本和 GitHub 最新 Release，也可以通过右上角的齿轮按钮进入“软件信息”，手动查询更新。
+
+- Windows 绿色版和 Linux 便携版发现新版本后会自动下载对应平台的发布包。
+- 下载完成后会核对 GitHub 提供的文件大小与 SHA-256 摘要，再替换程序并重新启动。
+- 更新时保留本地 `config` 配置目录。
+- 源码开发模式不会覆盖源码，只显示版本状态与 Release 链接。
+- Flatpak 版目前显示新版本和下载入口，由用户安装新的 Flatpak 包。
+
+自动更新依赖公开可访问的 GitHub Release，并要求程序所在目录具有写入权限。
 
 ## 从源码运行
 
@@ -229,9 +244,11 @@ MediaLinker/
 │   │   │   ├── files.py       # 文件扫描与目录选择
 │   │   │   ├── metadata.py    # TMDB 中文资料
 │   │   │   ├── organizer.py   # 硬链接与移动重命名
+│   │   │   ├── updates.py     # GitHub 版本检查与自动更新
 │   │   │   └── health.py      # 健康检查
 │   │   ├── main.py
-│   │   └── models.py
+│   │   ├── models.py
+│   │   └── version.py          # 当前软件版本
 │   ├── requirements.txt
 │   └── run.py                 # 便携版入口
 ├── frontend/
@@ -259,6 +276,8 @@ MediaLinker/
 | `POST` | `/api/metadata/config` | 验证并保存 TMDB Token |
 | `GET` | `/api/metadata/search` | 搜索中文影视资料 |
 | `POST` | `/api/organizer/execute` | 创建硬链接或移动重命名 |
+| `GET` | `/api/update/check` | 比较本地与 GitHub 最新版本 |
+| `POST` | `/api/update/apply` | 下载、校验并安装便携版更新 |
 
 ## 安全设计
 
@@ -269,6 +288,7 @@ MediaLinker/
 - 目录和文件名经过 Windows 非法字符检查。
 - TMDB Token 只保存在本地配置中。
 - 服务默认仅监听 `127.0.0.1`，不会直接暴露到局域网或互联网。
+- 自动更新只接受 GitHub Release 中与当前平台名称完全匹配的附件，并校验大小与 SHA-256。
 
 ## 已知限制
 
@@ -277,6 +297,7 @@ MediaLinker/
 - 系统文件夹选择窗口要求程序运行在图形桌面会话中。
 - 当前只自动关联 SRT 字幕。
 - Flatpak 为整理任意媒体目录需要较宽的主机文件访问权限。
+- Flatpak 暂不直接替换自身，发现更新后需要安装新的 Flatpak 发布包。
 
 ## 路线图
 
@@ -305,4 +326,3 @@ MediaLinker/
 ## 第三方服务声明
 
 本产品使用 TMDB API，但未经 TMDB 认可或认证。影视文字、图片及其他元数据的权利归其各自权利人所有。
-

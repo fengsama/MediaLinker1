@@ -31,6 +31,20 @@ const linkError = ref('')
 const linkResult = ref(null)
 const operationMode = ref('hardlink')
 const confirmOriginalChange = ref(false)
+const settingsOpen = ref(false)
+const settingsView = ref('menu')
+const updateInfo = ref({
+  current_version: '0.3.0',
+  latest_version: '',
+  update_available: false,
+  can_auto_update: false,
+  release_url: '',
+  platform: '',
+  packaged: false,
+})
+const updateState = ref('idle')
+const updateMessage = ref('')
+const autoUpdateAttempted = ref(false)
 
 const selectedFiles = computed(() => files.value.filter((file) => selectedPaths.value.has(file.path)))
 const totalSize = computed(() => selectedFiles.value.reduce((sum, file) => sum + file.size, 0))
@@ -74,6 +88,60 @@ function formatSize(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   return `${(bytes / 1024 ** index).toFixed(index > 2 ? 2 : 1)} ${units[index]}`
+}
+
+function openSettings() {
+  settingsView.value = 'menu'
+  settingsOpen.value = true
+}
+
+async function applySoftwareUpdate() {
+  if (autoUpdateAttempted.value || updateState.value === 'downloading' || updateState.value === 'restarting') return
+  autoUpdateAttempted.value = true
+  updateState.value = 'downloading'
+  updateMessage.value = `正在下载 MediaLinker v${updateInfo.value.latest_version}…`
+  try {
+    const response = await fetch('/api/update/apply', { method: 'POST' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '自动更新失败')
+    if (data.status === 'up_to_date') {
+      updateState.value = 'up_to_date'
+      updateMessage.value = data.message || '当前已经是最新版本。'
+      return
+    }
+    updateState.value = 'restarting'
+    updateMessage.value = data.message || '更新已下载，软件即将重新启动。'
+  } catch (requestError) {
+    updateState.value = 'error'
+    updateMessage.value = requestError.message || '自动更新失败，请稍后重试。'
+  }
+}
+
+async function checkForUpdates({ automatic = false, force = false } = {}) {
+  if (updateState.value === 'checking' || updateState.value === 'downloading' || updateState.value === 'restarting') return
+  updateState.value = 'checking'
+  updateMessage.value = automatic ? '正在自动检查更新…' : '正在查询 GitHub 最新版本…'
+  try {
+    const response = await fetch(`/api/update/check?force=${force ? 'true' : 'false'}`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '检查更新失败')
+    updateInfo.value = data
+    if (!data.update_available) {
+      updateState.value = 'up_to_date'
+      updateMessage.value = `当前已是最新版本 v${data.current_version}`
+      return
+    }
+    updateState.value = 'available'
+    updateMessage.value = `发现新版本 v${data.latest_version}`
+    if (data.can_auto_update) {
+      await applySoftwareUpdate()
+    } else if (automatic) {
+      updateMessage.value = `发现新版本 v${data.latest_version}，当前运行方式需要手动安装。`
+    }
+  } catch (requestError) {
+    updateState.value = 'error'
+    updateMessage.value = requestError.message || '检查更新失败，请稍后重试。'
+  }
 }
 
 function toggleAll() {
@@ -263,14 +331,21 @@ onMounted(() => {
   checkHealth()
   checkMetadataStatus()
   targetPath.value = localStorage.getItem('media-linker-output-path') || ''
+  window.setTimeout(() => checkForUpdates({ automatic: true }), 900)
 })
 </script>
 
 <template>
   <div class="shell">
     <header class="hero">
-      <div><span class="eyebrow">MEDIA LINKER · V0.3</span><h1>影视硬链接整理工具</h1><p>扫描下载目录，为后续重命名、剧集归档和硬链接生成做好准备。</p></div>
-      <span class="status" :class="{ online: apiOnline }"><i></i>{{ apiOnline ? '后端已连接' : '后端未连接' }}</span>
+      <div><span class="eyebrow">MEDIA LINKER · V{{ updateInfo.current_version }}</span><h1>影视硬链接整理工具</h1><p>扫描下载目录，为后续重命名、剧集归档和硬链接生成做好准备。</p></div>
+      <div class="hero-actions">
+        <span class="status" :class="{ online: apiOnline }"><i></i>{{ apiOnline ? '后端已连接' : '后端未连接' }}</span>
+        <button class="settings-button" :class="{ 'has-update': updateInfo.update_available }" aria-label="打开设置" title="设置" @click="openSettings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.7a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Zm9 3.3-2.1-1.2c0-.5-.2-1-.4-1.5l.9-2.3-2.4-2.4-2.3.9c-.5-.2-1-.4-1.5-.4L12 3H8.7L7.5 5.1c-.5.1-1 .2-1.5.4l-2.3-.9L1.3 7l.9 2.3c-.2.5-.3 1-.4 1.5L0 12l1.8 1.2c.1.5.2 1 .4 1.5L1.3 17l2.4 2.4 2.3-.9c.5.2 1 .3 1.5.4L8.7 21H12l1.2-2.1c.5-.1 1-.2 1.5-.4l2.3.9 2.4-2.4-.9-2.3c.2-.5.4-1 .4-1.5L21 12Z"/></svg>
+          <span v-if="updateInfo.update_available" class="update-dot"></span>
+        </button>
+      </div>
     </header>
 
     <main>
@@ -362,5 +437,42 @@ onMounted(() => {
         <footer class="modal-footer"><span>{{ metadataConfigMode ? 'TMDB 凭证不会显示在前端搜索请求中' : (selectedMetadataId ? '已选择一条资料' : '请选择正确的搜索结果') }}</span><div><button class="secondary" @click="metadataOpen = false">取消</button><button v-if="metadataConfigMode" class="primary" :disabled="configSaving" @click="saveTmdbConfig">{{ configSaving ? '验证并保存中…' : '验证并保存' }}</button><button v-else class="primary" :disabled="!selectedMetadataId" @click="applyMetadata">完成并填充</button></div></footer>
       </section>
     </div>
+
+    <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-label="软件设置">
+        <header class="modal-header">
+          <div><span>MEDIA LINKER · 设置</span><h2>{{ settingsView === 'menu' ? '设置' : '软件信息' }}</h2><p>{{ settingsView === 'menu' ? '管理 MediaLinker 的软件选项' : '版本信息与在线更新' }}</p></div>
+          <button class="close-button" aria-label="关闭设置" @click="settingsOpen = false">×</button>
+        </header>
+        <div v-if="settingsView === 'menu'" class="settings-menu">
+          <button class="settings-option" @click="settingsView = 'about'">
+            <span class="settings-option-icon">i</span>
+            <span><strong>软件信息</strong><small>查看版本号、检查更新和发布信息</small></span>
+            <b>›</b>
+          </button>
+        </div>
+        <div v-else class="about-view">
+          <button class="settings-back" @click="settingsView = 'menu'">← 返回设置</button>
+          <div class="app-identity"><div class="app-mark">ML</div><div><strong>MediaLinker</strong><span>影视硬链接整理工具</span></div></div>
+          <div class="version-grid">
+            <div><small>本地版本</small><strong>v{{ updateInfo.current_version }}</strong></div>
+            <div><small>GitHub 最新版本</small><strong>{{ updateInfo.latest_version ? `v${updateInfo.latest_version}` : '尚未查询' }}</strong></div>
+            <div><small>运行平台</small><strong>{{ updateInfo.platform || '检测中' }}</strong></div>
+          </div>
+          <div class="update-status" :class="`state-${updateState}`">
+            <span v-if="updateState === 'checking' || updateState === 'downloading'" class="spinner small-spinner"></span>
+            <i v-else></i>
+            <div><strong>{{ updateState === 'error' ? '更新检查遇到问题' : (updateInfo.update_available ? '软件更新' : '版本状态') }}</strong><p>{{ updateMessage || '打开软件时会自动检查 GitHub 最新版本。' }}</p></div>
+          </div>
+          <div class="about-actions">
+            <a v-if="updateInfo.release_url" class="release-link" :href="updateInfo.release_url" target="_blank" rel="noreferrer">查看 Release</a>
+            <button class="primary" :disabled="['checking', 'downloading', 'restarting'].includes(updateState)" @click="checkForUpdates({ force: true })">{{ updateState === 'checking' ? '查询中…' : '手动查询更新' }}</button>
+          </div>
+          <p class="update-help">绿色版检测到新版本后会自动下载、替换并重新启动。Flatpak 版会显示最新版本和下载入口。</p>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="updateState === 'downloading' || updateState === 'restarting'" class="update-toast"><span class="spinner small-spinner"></span><div><strong>MediaLinker 正在更新</strong><p>{{ updateMessage }}</p></div></div>
   </div>
 </template>
