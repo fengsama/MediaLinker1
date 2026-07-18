@@ -34,13 +34,16 @@ const confirmOriginalChange = ref(false)
 const settingsOpen = ref(false)
 const settingsView = ref('menu')
 const updateInfo = ref({
-  current_version: '0.4.2',
+  current_version: '0.4.3',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
   release_url: '',
   platform: '',
   packaged: false,
+  auto_update_blocked: false,
+  last_update_error: '',
+  last_update_log: '',
 })
 const updateState = ref('idle')
 const updateMessage = ref('')
@@ -121,13 +124,37 @@ function openSettings() {
   settingsOpen.value = true
 }
 
-async function applySoftwareUpdate() {
+async function pollUpdateStatus() {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1500))
+    try {
+      const response = await fetch('/api/update/status')
+      const data = await response.json()
+      if (!response.ok) continue
+      if (data.status === 'failed') {
+        updateInfo.value = { ...updateInfo.value, auto_update_blocked: true, last_update_error: data.last_error, last_update_log: data.installer_log }
+        updateState.value = 'error'
+        updateMessage.value = data.last_error || '自动更新失败。'
+        return
+      }
+      if (data.status === 'success') {
+        updateState.value = 'up_to_date'
+        updateMessage.value = `更新成功，当前版本 v${data.current_version}`
+        return
+      }
+    } catch { /* 安装过程中后台可能正在重启 */ }
+  }
+  updateState.value = 'error'
+  updateMessage.value = '更新等待超时。请重新打开软件查看版本；如果仍是旧版，请手动下载安装包。'
+}
+
+async function applySoftwareUpdate(force = false) {
   if (autoUpdateAttempted.value || updateState.value === 'downloading' || updateState.value === 'restarting') return
   autoUpdateAttempted.value = true
   updateState.value = 'downloading'
   updateMessage.value = `正在下载 MediaLinker v${updateInfo.value.latest_version}…`
   try {
-    const response = await fetch('/api/update/apply', { method: 'POST' })
+    const response = await fetch(`/api/update/apply?force=${force ? 'true' : 'false'}`, { method: 'POST' })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '自动更新失败')
     if (data.status === 'up_to_date') {
@@ -135,8 +162,9 @@ async function applySoftwareUpdate() {
       updateMessage.value = data.message || '当前已经是最新版本。'
       return
     }
-    updateState.value = 'restarting'
+    updateState.value = data.status === 'installing' ? 'restarting' : data.status
     updateMessage.value = data.message || '更新已下载，软件即将重新启动。'
+    pollUpdateStatus()
   } catch (requestError) {
     updateState.value = 'error'
     updateMessage.value = requestError.message || '自动更新失败，请稍后重试。'
@@ -152,6 +180,11 @@ async function checkForUpdates({ automatic = false, force = false } = {}) {
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '检查更新失败')
     updateInfo.value = data
+    if (data.last_update_error) {
+      updateState.value = 'error'
+      updateMessage.value = data.last_update_error
+      return
+    }
     if (!data.update_available) {
       updateState.value = 'up_to_date'
       updateMessage.value = `当前已是最新版本 v${data.current_version}`
@@ -168,6 +201,12 @@ async function checkForUpdates({ automatic = false, force = false } = {}) {
     updateState.value = 'error'
     updateMessage.value = requestError.message || '检查更新失败，请稍后重试。'
   }
+}
+
+async function retrySoftwareUpdate() {
+  autoUpdateAttempted.value = false
+  updateInfo.value = { ...updateInfo.value, auto_update_blocked: false, last_update_error: '' }
+  await applySoftwareUpdate(true)
 }
 
 function toggleAll() {
@@ -494,12 +533,15 @@ onMounted(() => {
           <div class="about-actions">
             <a v-if="updateInfo.release_url" class="release-link" :href="updateInfo.release_url" target="_blank" rel="noreferrer">查看 Release</a>
             <button class="primary" :disabled="['checking', 'downloading', 'restarting'].includes(updateState)" @click="checkForUpdates({ force: true })">{{ updateState === 'checking' ? '查询中…' : '手动查询更新' }}</button>
+            <button v-if="updateInfo.auto_update_blocked" class="retry-update" :disabled="['downloading', 'restarting'].includes(updateState)" @click="retrySoftwareUpdate">重试更新</button>
           </div>
+          <p v-if="updateInfo.last_update_log" class="update-log-path">安装日志：{{ updateInfo.last_update_log }}</p>
           <p class="update-help">Windows 安装版、绿色版和 Linux 便携版会自动下载对应更新并重新启动。Flatpak 版会显示最新版本和下载入口。</p>
         </div>
       </section>
     </div>
 
     <div v-if="updateState === 'downloading' || updateState === 'restarting'" class="update-toast"><span class="spinner small-spinner"></span><div><strong>MediaLinker 正在更新</strong><p>{{ updateMessage }}</p></div></div>
+    <div v-else-if="updateState === 'error' && updateMessage" class="update-toast update-error-toast"><i></i><div><strong>MediaLinker 更新失败</strong><p>{{ updateMessage }}</p><small v-if="updateInfo.last_update_log">日志：{{ updateInfo.last_update_log }}</small></div></div>
   </div>
 </template>

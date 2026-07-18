@@ -33,6 +33,67 @@ _update_lock = threading.Lock()
 _update_started = False
 
 
+def _update_state_path(install_dir: Path | None = None) -> Path:
+    root = install_dir or Path(sys.executable).resolve().parent
+    return root / "config" / "update-state.json"
+
+
+def _write_update_state(state: dict[str, Any], install_dir: Path | None = None) -> Path:
+    path = _update_state_path(install_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+    return path
+
+
+def _read_update_state(install_dir: Path | None = None) -> dict[str, Any]:
+    path = _update_state_path(install_dir)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _record_update_error(message: str, install_dir: Path | None = None) -> None:
+    state = _read_update_state(install_dir)
+    state.update(
+        {
+            "status": "failed",
+            "last_error": message,
+            "failed_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    _write_update_state(state, install_dir)
+
+
+def _resolved_update_state() -> dict[str, Any]:
+    state = _read_update_state()
+    if not state:
+        return {}
+    target_version = str(state.get("target_version") or "")
+    if target_version and _version_tuple(__version__) >= _version_tuple(target_version):
+        if state.get("status") != "success":
+            state.update(
+                {
+                    "status": "success",
+                    "last_error": "",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            _write_update_state(state)
+        return state
+    if state.get("status") == "installing" and state.get("source_pid") != os.getpid():
+        message = (
+            f"自动安装未完成：目标版本 v{target_version or '未知'}，"
+            f"当前仍为 v{__version__}。自动重试已停止。"
+        )
+        _record_update_error(message)
+        return _read_update_state()
+    return state
+
+
 def _version_tuple(value: str) -> tuple[int, ...]:
     normalized = value.strip().lower().removeprefix("v").split("-", 1)[0]
     parts = []
@@ -135,6 +196,8 @@ def _release_info(force: bool = False) -> dict[str, Any]:
         (item for item in release.get("assets", []) if item.get("name") == expected_asset),
         None,
     )
+    update_state = _resolved_update_state()
+    update_blocked = update_state.get("status") == "failed"
     return {
         "current_version": __version__,
         "latest_version": latest_version,
@@ -148,7 +211,11 @@ def _release_info(force: bool = False) -> dict[str, Any]:
         "asset_url": (asset or {}).get("browser_download_url") or "",
         "asset_size": int((asset or {}).get("size") or 0),
         "asset_digest": (asset or {}).get("digest") or "",
-        "can_auto_update": bool(can_auto_update and asset),
+        "can_auto_update": bool(can_auto_update and asset and not update_blocked),
+        "auto_update_blocked": update_blocked,
+        "last_update_error": str(update_state.get("last_error") or ""),
+        "last_update_log": str(update_state.get("installer_log") or ""),
+        "update_status": str(update_state.get("status") or "idle"),
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -156,6 +223,18 @@ def _release_info(force: bool = False) -> dict[str, Any]:
 @router.get("/check")
 def check_update(force: bool = Query(default=False)) -> dict[str, Any]:
     return _release_info(force=force)
+
+
+@router.get("/status")
+def update_status() -> dict[str, Any]:
+    state = _resolved_update_state()
+    return {
+        "status": str(state.get("status") or "idle"),
+        "last_error": str(state.get("last_error") or ""),
+        "installer_log": str(state.get("installer_log") or ""),
+        "target_version": str(state.get("target_version") or ""),
+        "current_version": __version__,
+    }
 
 
 def _safe_extract_zip(archive: Path, destination: Path) -> None:
@@ -254,32 +333,6 @@ try {{
     return script
 
 
-def _prepare_windows_installer_updater(installer: Path, install_dir: Path) -> Path:
-    updater_dir = Path(tempfile.mkdtemp(prefix="medialinker-installer-"))
-    script = updater_dir / "install-update.ps1"
-    log_file = updater_dir / "update.log"
-    executable = install_dir / "MediaLinker.exe"
-    script.write_text(
-        f"""
-$processId = {os.getpid()}
-$installer = {_quote_powershell(str(installer))}
-$executable = {_quote_powershell(str(executable))}
-$logFile = {_quote_powershell(str(log_file))}
-while (Get-Process -Id $processId -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 500 }}
-try {{
-    $process = Start-Process -FilePath $installer -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CLOSEAPPLICATIONS' -Wait -PassThru
-    if ($process.ExitCode -ne 0) {{ throw "安装程序退出代码：$($process.ExitCode)" }}
-    Start-Process -FilePath $executable
-}} catch {{
-    $_ | Out-String | Set-Content -LiteralPath $logFile -Encoding UTF8
-    if (Test-Path -LiteralPath $executable) {{ Start-Process -FilePath $executable }}
-}}
-""".strip(),
-        encoding="utf-8-sig",
-    )
-    return script
-
-
 def _quote_shell(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
@@ -321,16 +374,39 @@ def _exit_after_response() -> None:
     os._exit(0)
 
 
+def _monitor_windows_installer(process: subprocess.Popen[Any], install_dir: Path) -> None:
+    exit_code = process.wait()
+    if exit_code != 0:
+        _record_update_error(f"安装程序执行失败，退出代码：{exit_code}。", install_dir)
+        return
+    time.sleep(3)
+    _record_update_error(
+        "安装程序已经结束，但旧版本没有自动关闭。请关闭 MediaLinker 后重新打开；"
+        "如果版本仍未更新，请查看安装日志或手动下载安装包。",
+        install_dir,
+    )
+
+
 @router.post("/apply")
-def apply_update() -> dict[str, Any]:
+def apply_update(force: bool = Query(default=False)) -> dict[str, Any]:
     global _update_started
     with _update_lock:
         if _update_started:
             return {"status": "already_started", "message": "更新已开始，请稍候。"}
+        if force:
+            state = _read_update_state()
+            if state.get("status") == "failed":
+                state.update({"status": "retrying", "last_error": ""})
+                _write_update_state(state)
         info = _release_info(force=True)
         if not info["update_available"]:
             return {"status": "up_to_date", "message": "当前已经是最新版本。", **info}
         if not info["can_auto_update"]:
+            if info.get("auto_update_blocked"):
+                raise HTTPException(
+                    status_code=409,
+                    detail=str(info.get("last_update_error") or "上次更新失败，自动重试已停止。"),
+                )
             raise HTTPException(
                 status_code=409,
                 detail="当前运行方式不支持自动替换程序，请从 Release 页面手动下载安装。",
@@ -346,26 +422,44 @@ def apply_update() -> dict[str, Any]:
         _verify_download(archive, int(info["asset_size"]), str(info["asset_digest"]))
 
         if platform_name == "windows-installer":
-            script = _prepare_windows_installer_updater(archive, install_dir)
+            installer_log = install_dir / "config" / "update-installer.log"
+            state = {
+                "status": "installing",
+                "source_pid": os.getpid(),
+                "source_version": __version__,
+                "target_version": str(info["latest_version"]),
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "installer_log": str(installer_log),
+                "downloaded_installer": str(archive),
+                "last_error": "",
+            }
+            _write_update_state(state, install_dir)
             creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
                 subprocess, "DETACHED_PROCESS", 0
             )
-            subprocess.Popen(
+            process = subprocess.Popen(
                 [
-                    "powershell.exe",
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
-                    str(script),
+                    str(archive),
+                    "/VERYSILENT",
+                    "/SUPPRESSMSGBOXES",
+                    "/NORESTART",
+                    "/CLOSEAPPLICATIONS",
+                    "/FORCECLOSEAPPLICATIONS",
+                    f"/DIR={install_dir}",
+                    f"/LOG={installer_log}",
                 ],
                 creationflags=creation_flags,
                 close_fds=True,
+                cwd=archive.parent,
             )
-            threading.Thread(target=_exit_after_response, daemon=True).start()
+            threading.Thread(
+                target=_monitor_windows_installer,
+                args=(process, install_dir),
+                daemon=True,
+            ).start()
             return {
-                "status": "restarting",
-                "message": "新版安装包已下载，软件即将自动安装并重新启动。",
+                "status": "installing",
+                "message": "新版安装包已下载，正在安装。安装失败时本页面会显示具体原因。",
                 "current_version": __version__,
                 "latest_version": info["latest_version"],
             }
@@ -415,7 +509,10 @@ def apply_update() -> dict[str, Any]:
             "current_version": __version__,
             "latest_version": info["latest_version"],
         }
-    except Exception:
+    except Exception as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        if _read_update_state().get("status") in {"installing", "retrying"}:
+            _record_update_error(f"启动自动更新失败：{detail}")
         with _update_lock:
             _update_started = False
         raise
