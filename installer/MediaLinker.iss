@@ -1,5 +1,5 @@
 #define MyAppName "MediaLinker"
-#define MyAppVersion "0.4.4"
+#define MyAppVersion "0.4.5"
 #define MyAppPublisher "fengsama"
 #define MyAppURL "https://github.com/fengsama/MediaLinker1"
 #define MyAppExeName "MediaLinker.exe"
@@ -23,7 +23,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayIcon={app}\MediaLinker-v{#MyAppVersion}.ico
 CloseApplications=yes
 RestartApplications=no
 SetupLogging=yes
@@ -35,11 +35,12 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 Source: "..\dist\MediaLinker\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "installed.marker"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\MediaLinker.ico"; DestDir: "{app}"; DestName: "MediaLinker-v{#MyAppVersion}.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\MediaLinker-v{#MyAppVersion}.ico"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\MediaLinker-v{#MyAppVersion}.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait runascurrentuser
