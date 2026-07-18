@@ -10,6 +10,7 @@
   </description>
   <launchable type="desktop-id">io.github.medialinker.MediaLinker.desktop</launchable>
   <releases>
+    <release version="0.4.4" date="2026-07-18"/>
     <release version="0.4.3" date="2026-07-18"/>
   </releases>
 </component>

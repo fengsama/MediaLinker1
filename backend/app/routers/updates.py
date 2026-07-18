@@ -457,6 +457,10 @@ def apply_update(force: bool = Query(default=False)) -> dict[str, Any]:
                 args=(process, install_dir),
                 daemon=True,
             ).start()
+            # Inno Setup cannot replace/remove the running packaged executable.
+            # The installer is already detached and waiting, so return the API
+            # response first and then let the old service exit cleanly.
+            threading.Thread(target=_exit_after_response, daemon=True).start()
             return {
                 "status": "installing",
                 "message": "新版安装包已下载，正在安装。安装失败时本页面会显示具体原因。",

@@ -1,5 +1,5 @@
 #define MyAppName "MediaLinker"
-#define MyAppVersion "0.4.3"
+#define MyAppVersion "0.4.4"
 #define MyAppPublisher "fengsama"
 #define MyAppURL "https://github.com/fengsama/MediaLinker1"
 #define MyAppExeName "MediaLinker.exe"
@@ -43,3 +43,20 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDi
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Flags: nowait runascurrentuser
+
+[UninstallRun]
+; The desktop build has no visible window, so close its background process before
+; Inno Setup starts removing files.  A non-zero taskkill result (already stopped)
+; is harmless and must not prevent uninstalling.
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM {#MyAppExeName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopMediaLinker"
+
+[UninstallDelete]
+; Runtime configuration, update state and logs are user-created and therefore are
+; not part of Inno Setup's installed-file manifest.
+Type: filesandordirs; Name: "{app}\config"
+Type: filesandordirs; Name: "{localappdata}\Temp\medialinker-update-*"
+Type: filesandordirs; Name: "{localappdata}\Temp\medialinker-installer-*"
+; Remove any obsolete files left by an older portable/update build, then allow the
+; uninstaller to remove itself and the now-empty application directory.
+Type: filesandordirs; Name: "{app}\*"
+Type: dirifempty; Name: "{app}"
