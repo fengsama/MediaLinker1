@@ -1,5 +1,5 @@
 #define MyAppName "MediaLinker"
-#define MyAppVersion "0.4.5"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "fengsama"
 #define MyAppURL "https://github.com/fengsama/MediaLinker1"
 #define MyAppExeName "MediaLinker.exe"
