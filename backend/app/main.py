@@ -1,11 +1,14 @@
+import hmac
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import files, health, lifecycle, metadata, organizer, updates
+from app.routers import auth, files, health, lifecycle, metadata, organizer, updates
+from app.server_config import access_token, is_server_mode
 from app.version import __version__
 
 
@@ -23,6 +26,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def protect_server_api(request: Request, call_next):
+    if not is_server_mode() or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    if request.url.path in {"/api/health", "/api/auth/login"}:
+        return await call_next(request)
+    configured_token = access_token()
+    if not configured_token:
+        return JSONResponse(status_code=503, content={"detail": "服务器管理员尚未配置访问密码"})
+    authorization = request.headers.get("authorization", "")
+    supplied_token = authorization[7:] if authorization.lower().startswith("bearer ") else ""
+    if not supplied_token or not hmac.compare_digest(supplied_token, configured_token):
+        return JSONResponse(status_code=401, content={"detail": "请先输入服务器访问密码"})
+    return await call_next(request)
+
+app.include_router(auth.router, prefix="/api/auth")
 app.include_router(health.router, prefix="/api")
 app.include_router(lifecycle.router, prefix="/api")
 app.include_router(files.router, prefix="/api/files")

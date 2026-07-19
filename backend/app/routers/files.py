@@ -12,6 +12,7 @@ from urllib.parse import unquote, urlparse
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models import ScanRequest, ScanResponse, SubtitleFile, VideoFile
+from app.server_config import allowed_roots, is_server_mode, path_is_allowed
 
 
 router = APIRouter(tags=["files"])
@@ -222,6 +223,8 @@ def _pick_directory_with_tk(title: str) -> str:
 @router.post("/pick-directory")
 def pick_directory(purpose: str = Query(default="source", pattern="^(source|target)$")) -> dict[str, str | bool]:
     """Open a native directory picker on the machine running the API."""
+    if is_server_mode():
+        raise HTTPException(status_code=409, detail="服务器模式请使用网页中的 NAS 目录浏览器")
     title = "选择硬链接输出文件夹" if purpose == "target" else "选择需要扫描的影视文件夹"
     errors = []
 
@@ -252,9 +255,69 @@ def pick_directory(purpose: str = Query(default="source", pattern="^(source|targ
     )
 
 
+@router.get("/browse")
+def browse_server_directory(path: str = Query(default="", max_length=4096)) -> dict[str, object]:
+    if not is_server_mode():
+        raise HTTPException(status_code=409, detail="目录浏览接口仅在 Docker/NAS 服务器模式下可用")
+
+    roots = [root for root in allowed_roots() if root.exists() and root.is_dir()]
+    if not roots:
+        raise HTTPException(status_code=503, detail="管理员尚未配置可访问的 NAS 目录")
+
+    if not path.strip():
+        return {
+            "current_path": "",
+            "parent_path": None,
+            "can_select": False,
+            "entries": [
+                {"name": root.name or str(root), "path": str(root), "is_root": True}
+                for root in roots
+            ],
+        }
+
+    current = Path(path).expanduser().resolve()
+    if not path_is_allowed(current):
+        raise HTTPException(status_code=403, detail="该目录不在管理员允许访问的范围内")
+    if not current.exists() or not current.is_dir():
+        raise HTTPException(status_code=404, detail="目录不存在或不是文件夹")
+
+    containing_roots = [root for root in roots if current == root or root in current.parents]
+    if not containing_roots:
+        raise HTTPException(status_code=403, detail="该目录不在已挂载的 NAS 目录内")
+    active_root = max(containing_roots, key=lambda item: len(item.parts))
+    parent_path = str(current.parent) if current != active_root else ""
+    entries = []
+    try:
+        children = sorted(
+            (child for child in current.iterdir() if child.is_dir()),
+            key=lambda item: _natural_key(item.name),
+        )
+        for child in children:
+            try:
+                resolved = child.resolve()
+                if path_is_allowed(resolved):
+                    entries.append({"name": child.name, "path": str(resolved), "is_root": False})
+            except (OSError, RuntimeError):
+                continue
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=f"没有权限浏览目录：{current}") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"读取目录失败：{exc}") from exc
+
+    return {
+        "current_path": str(current),
+        "parent_path": parent_path,
+        "can_select": True,
+        "entries": entries,
+    }
+
+
 @router.post("/scan", response_model=ScanResponse)
 def scan_video_files(request: ScanRequest) -> ScanResponse:
     root = Path(request.path).expanduser()
+
+    if is_server_mode() and not path_is_allowed(root):
+        raise HTTPException(status_code=403, detail="扫描目录不在管理员允许访问的范围内")
 
     if not root.exists():
         raise HTTPException(status_code=404, detail="目录不存在或当前服务无法访问")

@@ -10,6 +10,19 @@ const loading = ref(false)
 const pickingDirectory = ref(false)
 const error = ref('')
 const apiOnline = ref(false)
+const serverMode = ref(false)
+const serverConfigured = ref(true)
+const authenticated = ref(false)
+const serverPassword = ref('')
+const authLoading = ref(false)
+const authError = ref('')
+const serverBrowserOpen = ref(false)
+const serverBrowserPurpose = ref('source')
+const serverBrowserPath = ref('')
+const serverBrowserParent = ref('')
+const serverBrowserEntries = ref([])
+const serverBrowserLoading = ref(false)
+const serverBrowserError = ref('')
 const mediaType = ref('tv')
 const title = ref('')
 const year = ref('')
@@ -39,7 +52,7 @@ const historyLoading = ref(false)
 const historyError = ref('')
 const undoingTaskId = ref('')
 const updateInfo = ref({
-  current_version: '0.6.0',
+  current_version: '0.7.0',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
@@ -57,8 +70,22 @@ let lifecycleSocket = null
 let lifecycleReconnectTimer = null
 let pageIsClosing = false
 
+async function apiFetch(input, init = {}) {
+  const headers = new Headers(init.headers || {})
+  const token = sessionStorage.getItem('media-linker-server-token') || ''
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await window.fetch(input, { ...init, headers })
+  if (response.status === 401 && serverMode.value) {
+    authenticated.value = false
+    authError.value = '登录已失效，请重新输入访问密码。'
+    lifecycleSocket?.close()
+  }
+  return response
+}
+
 function connectLifecycle() {
   if (!window.WebSocket || pageIsClosing) return
+  if (lifecycleSocket && lifecycleSocket.readyState <= WebSocket.OPEN) return
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   lifecycleSocket = new WebSocket(`${protocol}//${window.location.host}/api/lifecycle`)
   lifecycleSocket.addEventListener('open', () => lifecycleSocket.send('ready'))
@@ -74,6 +101,7 @@ window.addEventListener('beforeunload', () => {
 })
 
 const platformLabel = computed(() => ({
+  docker: 'NAS / Docker 服务端',
   'windows-installer': 'Windows 安装版',
   'windows-portable': 'Windows 绿色版',
   linux: 'Linux 便携版',
@@ -223,7 +251,7 @@ async function loadTaskHistory() {
   historyLoading.value = true
   historyError.value = ''
   try {
-    const response = await fetch('/api/organizer/history?limit=100')
+    const response = await apiFetch('/api/organizer/history?limit=100')
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '读取任务历史失败')
     taskHistory.value = data.tasks
@@ -244,7 +272,7 @@ async function undoHistoryTask(task) {
   undoingTaskId.value = task.id
   historyError.value = ''
   try {
-    const response = await fetch(`/api/organizer/history/${encodeURIComponent(task.id)}/undo`, { method: 'POST' })
+    const response = await apiFetch(`/api/organizer/history/${encodeURIComponent(task.id)}/undo`, { method: 'POST' })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '撤销失败')
     await loadTaskHistory()
@@ -259,7 +287,7 @@ async function pollUpdateStatus() {
   for (let attempt = 0; attempt < 120; attempt += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 1500))
     try {
-      const response = await fetch('/api/update/status')
+      const response = await apiFetch('/api/update/status')
       const data = await response.json()
       if (!response.ok) continue
       if (data.status === 'failed') {
@@ -285,7 +313,7 @@ async function applySoftwareUpdate(force = false) {
   updateState.value = 'downloading'
   updateMessage.value = `正在下载 MediaLinker v${updateInfo.value.latest_version}…`
   try {
-    const response = await fetch(`/api/update/apply?force=${force ? 'true' : 'false'}`, { method: 'POST' })
+    const response = await apiFetch(`/api/update/apply?force=${force ? 'true' : 'false'}`, { method: 'POST' })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '自动更新失败')
     if (data.status === 'up_to_date') {
@@ -307,7 +335,7 @@ async function checkForUpdates({ automatic = false, force = false } = {}) {
   updateState.value = 'checking'
   updateMessage.value = automatic ? '正在自动检查更新…' : '正在查询 GitHub 最新版本…'
   try {
-    const response = await fetch(`/api/update/check?force=${force ? 'true' : 'false'}`)
+    const response = await apiFetch(`/api/update/check?force=${force ? 'true' : 'false'}`)
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '检查更新失败')
     updateInfo.value = data
@@ -352,14 +380,49 @@ function toggleFile(path) {
 
 async function checkHealth() {
   try {
-    const response = await fetch('/api/health')
+    const response = await window.fetch('/api/health')
+    const data = await response.json()
     apiOnline.value = response.ok
+    serverMode.value = Boolean(data.server_mode)
+    serverConfigured.value = Boolean(data.server_configured)
+    if (!serverMode.value) {
+      authenticated.value = true
+      return
+    }
+    const savedToken = sessionStorage.getItem('media-linker-server-token') || ''
+    if (savedToken && serverConfigured.value) await loginToServer(savedToken, false)
   } catch { apiOnline.value = false }
+}
+
+async function loginToServer(password = serverPassword.value, remember = true) {
+  authError.value = ''
+  if (!password) { authError.value = '请输入 NAS 服务访问密码。'; return }
+  authLoading.value = true
+  try {
+    const response = await window.fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '登录失败')
+    sessionStorage.setItem('media-linker-server-token', password)
+    if (remember) serverPassword.value = ''
+    authenticated.value = true
+    connectLifecycle()
+    await checkMetadataStatus()
+  } catch (requestError) {
+    sessionStorage.removeItem('media-linker-server-token')
+    authenticated.value = false
+    authError.value = requestError.message || '无法登录 NAS 服务。'
+  } finally {
+    authLoading.value = false
+  }
 }
 
 async function checkMetadataStatus() {
   try {
-    const response = await fetch('/api/metadata/config/status')
+    const response = await apiFetch('/api/metadata/config/status')
     const data = await response.json()
     tmdbConfigured.value = Boolean(data.configured)
   } catch { tmdbConfigured.value = false }
@@ -367,9 +430,10 @@ async function checkMetadataStatus() {
 
 async function pickDirectory() {
   error.value = ''
+  if (serverMode.value) { await openServerBrowser('source'); return }
   pickingDirectory.value = true
   try {
-    const response = await fetch('/api/files/pick-directory', { method: 'POST' })
+    const response = await apiFetch('/api/files/pick-directory', { method: 'POST' })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '无法打开文件夹选择窗口')
     if (data.selected) sourcePath.value = data.path
@@ -380,6 +444,36 @@ async function pickDirectory() {
   }
 }
 
+async function browseServerDirectory(path = '') {
+  serverBrowserLoading.value = true
+  serverBrowserError.value = ''
+  try {
+    const response = await apiFetch(`/api/files/browse?path=${encodeURIComponent(path)}`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '读取 NAS 目录失败')
+    serverBrowserPath.value = data.current_path
+    serverBrowserParent.value = data.parent_path || ''
+    serverBrowserEntries.value = data.entries
+  } catch (requestError) {
+    serverBrowserError.value = requestError.message || '无法读取 NAS 目录。'
+  } finally {
+    serverBrowserLoading.value = false
+  }
+}
+
+async function openServerBrowser(purpose) {
+  serverBrowserPurpose.value = purpose
+  serverBrowserOpen.value = true
+  await browseServerDirectory('')
+}
+
+function chooseServerDirectory() {
+  if (!serverBrowserPath.value) return
+  if (serverBrowserPurpose.value === 'source') sourcePath.value = serverBrowserPath.value
+  else targetPath.value = serverBrowserPath.value
+  serverBrowserOpen.value = false
+}
+
 async function scanFiles() {
   error.value = ''
   files.value = []
@@ -388,7 +482,7 @@ async function scanFiles() {
   if (!sourcePath.value.trim()) { error.value = '请输入需要扫描的目录。'; return }
   loading.value = true
   try {
-    const response = await fetch('/api/files/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: sourcePath.value.trim(), recursive: recursive.value }) })
+    const response = await apiFetch('/api/files/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: sourcePath.value.trim(), recursive: recursive.value }) })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '扫描失败')
     files.value = data.files
@@ -426,9 +520,10 @@ function goToGenerate() {
 
 async function pickTargetDirectory() {
   linkError.value = ''
+  if (serverMode.value) { await openServerBrowser('target'); return }
   pickingTarget.value = true
   try {
-    const response = await fetch('/api/files/pick-directory?purpose=target', { method: 'POST' })
+    const response = await apiFetch('/api/files/pick-directory?purpose=target', { method: 'POST' })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '无法打开文件夹选择窗口')
     if (data.selected) targetPath.value = data.path
@@ -444,7 +539,7 @@ async function createLinks() {
   if (operationMode.value === 'move' && !confirmOriginalChange.value) { linkError.value = '请确认你理解原文件将被移动并重命名。'; return }
   linkLoading.value = true
   try {
-    const response = await fetch('/api/organizer/execute', {
+    const response = await apiFetch('/api/organizer/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -476,7 +571,7 @@ async function searchMetadata() {
   metadataConfigMode.value = false
   metadataLoading.value = true
   try {
-    const response = await fetch(`/api/metadata/search?q=${encodeURIComponent(title.value.trim())}`)
+    const response = await apiFetch(`/api/metadata/search?q=${encodeURIComponent(title.value.trim())}`)
     const data = await response.json()
     if (response.status === 503 || response.status === 401) {
       metadataConfigMode.value = true
@@ -504,7 +599,7 @@ async function saveTmdbConfig() {
   if (!tmdbToken.value.trim()) { metadataError.value = '请输入 API Read Access Token。'; return }
   configSaving.value = true
   try {
-    const response = await fetch('/api/metadata/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tmdbToken.value.trim() }) })
+    const response = await apiFetch('/api/metadata/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tmdbToken.value.trim() }) })
     const data = await response.json()
     if (!response.ok) throw new Error(data.detail || '保存 TMDB 凭证失败')
     tmdbConfigured.value = true
@@ -533,21 +628,23 @@ watch(operationMode, () => { confirmOriginalChange.value = false; linkError.valu
 watch([season, startEpisode], () => { if (step.value >= 2 && mediaType.value === 'tv') prepareEpisodeAssignments(false) })
 watch(mediaType, (value) => { if (value === 'tv' && step.value >= 2) prepareEpisodeAssignments(false) })
 
-onMounted(() => {
-  connectLifecycle()
-  checkHealth()
-  checkMetadataStatus()
+onMounted(async () => {
+  await checkHealth()
+  if (authenticated.value) {
+    connectLifecycle()
+    await checkMetadataStatus()
+  }
   targetPath.value = localStorage.getItem('media-linker-output-path') || ''
-  window.setTimeout(() => checkForUpdates({ automatic: true }), 900)
+  if (!serverMode.value) window.setTimeout(() => checkForUpdates({ automatic: true }), 900)
 })
 </script>
 
 <template>
   <div class="shell">
     <header class="hero">
-      <div><span class="eyebrow">MEDIA LINKER · V{{ updateInfo.current_version }}</span><h1>影视硬链接整理工具</h1><p>扫描下载目录，为后续重命名、剧集归档和硬链接生成做好准备。</p></div>
+      <div><span class="eyebrow">MEDIA LINKER · V{{ updateInfo.current_version }}</span><h1>影视硬链接整理工具</h1><p>{{ serverMode ? '直接整理 NAS 本机目录，通过浏览器完成重命名、归档和硬链接生成。' : '扫描下载目录，为后续重命名、剧集归档和硬链接生成做好准备。' }}</p></div>
       <div class="hero-actions">
-        <span class="status" :class="{ online: apiOnline }"><i></i>{{ apiOnline ? '后端已连接' : '后端未连接' }}</span>
+        <span class="status" :class="{ online: apiOnline }"><i></i>{{ apiOnline ? (serverMode ? 'NAS 服务已连接' : '后端已连接') : '后端未连接' }}</span>
         <button class="settings-button" :class="{ 'has-update': updateInfo.update_available }" aria-label="打开设置" title="设置" @click="openSettings">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.7a3.3 3.3 0 1 0 0 6.6 3.3 3.3 0 0 0 0-6.6Zm9 3.3-2.1-1.2c0-.5-.2-1-.4-1.5l.9-2.3-2.4-2.4-2.3.9c-.5-.2-1-.4-1.5-.4L12 3H8.7L7.5 5.1c-.5.1-1 .2-1.5.4l-2.3-.9L1.3 7l.9 2.3c-.2.5-.3 1-.4 1.5L0 12l1.8 1.2c.1.5.2 1 .4 1.5L1.3 17l2.4 2.4 2.3-.9c.5.2 1 .3 1.5.4L8.7 21H12l1.2-2.1c.5-.1 1-.2 1.5-.4l2.3.9 2.4-2.4-.9-2.3c.2-.5.4-1 .4-1.5L21 12Z"/></svg>
           <span v-if="updateInfo.update_available" class="update-dot"></span>
@@ -561,9 +658,9 @@ onMounted(() => {
       </section>
 
       <section v-if="step === 1" class="panel">
-        <div class="panel-title"><div><span>来源目录</span><h2>扫描并选择影视文件</h2></div><span class="tag">本地 / 已挂载 SMB</span></div>
+        <div class="panel-title"><div><span>来源目录</span><h2>扫描并选择影视文件</h2></div><span class="tag">{{ serverMode ? 'NAS 本机目录' : '本地 / 已挂载 SMB' }}</span></div>
         <form class="scan-form" @submit.prevent="scanFiles">
-          <label><span>目录路径</span><div class="input-row"><input v-model="sourcePath" placeholder="点击“选择文件夹”，或输入 D:\Downloads" /><button type="button" class="picker-button" :disabled="pickingDirectory" @click="pickDirectory">{{ pickingDirectory ? '等待选择…' : '选择文件夹' }}</button><button type="submit" :disabled="loading">{{ loading ? '扫描中…' : '开始扫描' }}</button></div></label>
+          <label><span>目录路径</span><div class="input-row"><input v-model="sourcePath" :placeholder="serverMode ? '点击“浏览 NAS 目录”选择容器已挂载路径' : '点击“选择文件夹”，或输入 D:\\Downloads'" /><button type="button" class="picker-button" :disabled="pickingDirectory" @click="pickDirectory">{{ pickingDirectory ? '等待选择…' : (serverMode ? '浏览 NAS 目录' : '选择文件夹') }}</button><button type="submit" :disabled="loading">{{ loading ? '扫描中…' : '开始扫描' }}</button></div></label>
           <label class="check"><input v-model="recursive" type="checkbox" /> 扫描所有子目录</label>
         </form>
         <p v-if="error" class="error">{{ error }}</p>
@@ -613,7 +710,7 @@ onMounted(() => {
           <label class="danger-option" :class="{ selected: operationMode === 'move' }"><input v-model="operationMode" type="radio" value="move" /><span><strong>移动并重命名原文件</strong><small>原文件将离开当前目录并进入媒体库，可能导致磁力/PT 任务无法继续做种。</small></span></label>
         </div>
         <div class="target-picker">
-          <label><span>输出根目录</span><div class="input-row"><input v-model="targetPath" placeholder="点击右侧按钮选择输出文件夹" /><button type="button" class="picker-button" :disabled="pickingTarget" @click="pickTargetDirectory">{{ pickingTarget ? '等待选择…' : '选择文件夹' }}</button></div></label>
+          <label><span>输出根目录</span><div class="input-row"><input v-model="targetPath" :placeholder="serverMode ? '选择 NAS 上的媒体库目录' : '点击右侧按钮选择输出文件夹'" /><button type="button" class="picker-button" :disabled="pickingTarget" @click="pickTargetDirectory">{{ pickingTarget ? '等待选择…' : (serverMode ? '浏览 NAS 目录' : '选择文件夹') }}</button></div></label>
         </div>
         <div class="summary"><div><small>准备处理</small><strong>{{ linkItems.length }} 个文件</strong></div><div><small>视频 / 字幕</small><strong>{{ previews.length }} / {{ selectedSubtitleCount }}</strong></div><div><small>原文件</small><strong>{{ operationMode === 'hardlink' ? '保持不变' : '移动并改名' }}</strong></div></div>
         <p v-if="linkError" class="error">{{ linkError }}</p>
@@ -624,6 +721,25 @@ onMounted(() => {
         <div class="actions"><button class="secondary" :disabled="linkLoading" @click="step = 3">← 返回预览</button><button class="primary" :class="{ 'danger-primary': operationMode === 'move' }" :disabled="linkLoading || Boolean(linkResult) || (operationMode === 'move' && !confirmOriginalChange)" @click="createLinks">{{ linkLoading ? '正在处理…' : (linkResult ? '处理完成' : (operationMode === 'hardlink' ? '开始生成硬链接' : '移动并重命名原文件')) }}</button></div>
       </section>
     </main>
+
+    <div v-if="serverMode && !authenticated" class="modal-backdrop server-login-backdrop">
+      <section class="server-login-modal" role="dialog" aria-modal="true" aria-label="登录 NAS 服务">
+        <div class="server-login-mark">ML</div><span>MEDIALINKER SERVER</span><h2>连接 NAS 整理服务</h2><p>请输入 Docker 部署时设置的访问密码。</p>
+        <form v-if="serverConfigured" @submit.prevent="loginToServer()"><input v-model="serverPassword" type="password" autocomplete="current-password" autofocus placeholder="访问密码" /><p v-if="authError" class="error">{{ authError }}</p><button class="primary" :disabled="authLoading">{{ authLoading ? '正在验证…' : '进入 MediaLinker' }}</button></form>
+        <div v-else class="server-config-error"><strong>服务器尚未完成安全配置</strong><p>请在 Docker 环境变量中设置 <code>MEDIALINKER_ACCESS_TOKEN</code> 后重启容器。</p></div>
+      </section>
+    </div>
+
+    <div v-if="serverBrowserOpen" class="modal-backdrop" @click.self="serverBrowserOpen = false">
+      <section class="server-browser-modal" role="dialog" aria-modal="true" aria-label="浏览 NAS 目录">
+        <header class="modal-header"><div><span>NAS · 服务器目录</span><h2>{{ serverBrowserPurpose === 'source' ? '选择扫描目录' : '选择输出目录' }}</h2><p>{{ serverBrowserPath || '请选择管理员挂载的目录' }}</p></div><button class="close-button" aria-label="关闭" @click="serverBrowserOpen = false">×</button></header>
+        <div class="server-browser-toolbar"><button class="secondary" :disabled="serverBrowserLoading || (!serverBrowserPath && !serverBrowserParent)" @click="browseServerDirectory(serverBrowserParent)">← 上一级</button><code>{{ serverBrowserPath || '挂载根目录' }}</code></div>
+        <p v-if="serverBrowserError" class="error server-browser-error">{{ serverBrowserError }}</p>
+        <div v-if="serverBrowserLoading" class="history-state"><span class="spinner"></span><p>正在读取 NAS 目录…</p></div>
+        <div v-else class="server-directory-list"><button v-for="entry in serverBrowserEntries" :key="entry.path" @dblclick="browseServerDirectory(entry.path)" @click="browseServerDirectory(entry.path)"><span>▸</span><div><strong>{{ entry.name }}</strong><small>{{ entry.path }}</small></div></button><p v-if="!serverBrowserEntries.length && !serverBrowserError" class="server-empty-directory">当前目录没有子文件夹</p></div>
+        <footer class="modal-footer"><span>{{ serverBrowserPath ? '选择当前显示的目录，或继续进入子目录' : '先进入一个挂载根目录' }}</span><div><button class="secondary" @click="serverBrowserOpen = false">取消</button><button class="primary" :disabled="!serverBrowserPath" @click="chooseServerDirectory">选择当前目录</button></div></footer>
+      </section>
+    </div>
 
     <div v-if="metadataOpen" class="modal-backdrop" @click.self="metadataOpen = false">
       <section class="metadata-modal" role="dialog" aria-modal="true" aria-label="影视资料搜索结果">
@@ -701,7 +817,7 @@ onMounted(() => {
             <button v-if="updateInfo.auto_update_blocked" class="retry-update" :disabled="['downloading', 'restarting'].includes(updateState)" @click="retrySoftwareUpdate">重试更新</button>
           </div>
           <p v-if="updateInfo.last_update_log" class="update-log-path">安装日志：{{ updateInfo.last_update_log }}</p>
-          <p class="update-help">Windows 安装版、绿色版和 Linux 便携版会自动下载对应更新并重新启动。Flatpak 版会显示最新版本和下载入口。</p>
+          <p class="update-help">Windows 安装版、绿色版和 Linux 便携版会自动下载对应更新并重新启动。Flatpak 版会显示下载入口；NAS/Docker 版请通过更新容器镜像升级。</p>
         </div>
       </section>
     </div>

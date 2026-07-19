@@ -126,6 +126,18 @@ fsutil hardlink list "完整文件路径"
 
 安装版默认安装到当前用户目录，不需要管理员权限。检测到新版本后，会下载新的 EXE 安装包、静默更新并重新启动。
 
+## NAS / Docker 服务端
+
+Docker 版直接运行在 NAS 上，通过 `http://NAS的IP:8787` 打开同一套网页。它直接访问 NAS 本机的媒体目录，不需要先在电脑上挂载 SMB。
+
+- 支持 `linux/amd64` 和 `linux/arm64`，覆盖常见的 Intel/AMD 与 ARM NAS。
+- 网页内提供 NAS 目录浏览器，可选择来源目录和输出目录。
+- 首次进入需要输入管理员在 Docker 环境变量中设置的访问密码。
+- 服务端只能访问管理员允许的挂载目录，默认是容器内的 `/nas`。
+- 配置、TMDB Token 和任务历史保存在独立的 `/config` 持久化目录。
+
+部署步骤、硬链接卷映射要求和更新方法见 [DOCKER-README.md](DOCKER-README.md)。
+
 ## Windows 绿色版
 
 Windows 便携版不需要安装 Python、Node.js 或其他依赖。
@@ -339,8 +351,8 @@ MediaLinker/
 - [ ] 下载海报、背景图并生成 NFO。
 - [x] 任务历史、撤销与失败回滚。
 - [ ] qBittorrent 下载完成后自动整理。
-- [ ] NAS/服务器端网页目录浏览器。
-- [ ] Docker 部署版本。
+- [x] NAS/服务器端网页目录浏览器。
+- [x] Docker/NAS 服务端部署版本。
 
 ## 贡献
 

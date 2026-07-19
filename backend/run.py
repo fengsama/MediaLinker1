@@ -33,15 +33,17 @@ def open_browser(port: int) -> None:
 
 
 def main() -> None:
-    port = choose_port()
+    server_mode = os.environ.get("MEDIALINKER_SERVER_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+    port = int(os.environ.get("MEDIALINKER_PORT", "8787")) if server_mode else choose_port()
+    host = "0.0.0.0" if server_mode else "127.0.0.1"
     print("=" * 58)
     print("影视硬链接整理工具已启动")
-    print(f"访问地址：http://127.0.0.1:{port}")
-    print("关闭所有 MediaLinker 网页后，服务会自动停止")
+    print(f"访问地址：http://{'NAS-IP' if server_mode else '127.0.0.1'}:{port}")
+    print("服务器模式正在持续运行" if server_mode else "关闭所有 MediaLinker 网页后，服务会自动停止")
     print("=" * 58)
-    if os.environ.get("MEDIALINKER_NO_BROWSER") != "1":
+    if not server_mode and os.environ.get("MEDIALINKER_NO_BROWSER") != "1":
         threading.Thread(target=open_browser, args=(port,), daemon=True).start()
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

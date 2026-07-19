@@ -1,0 +1,18 @@
+services:
+  medialinker:
+    image: ghcr.io/fengsama/medialinker:latest
+    build: .
+    container_name: medialinker
+    ports:
+      - "${MEDIALINKER_PORT:-8787}:8787"
+    environment:
+      MEDIALINKER_SERVER_MODE: "1"
+      MEDIALINKER_PORT: "8787"
+      MEDIALINKER_ACCESS_TOKEN: "${MEDIALINKER_ACCESS_TOKEN}"
+      MEDIALINKER_ALLOWED_ROOTS: '["/nas"]'
+      MEDIALINKER_CONFIG_DIR: "/config"
+    volumes:
+      # 整块媒体存储只映射一次，硬链接的来源与输出必须位于同一文件系统。
+      - "${NAS_ROOT}:/nas:rw"
+      - "${CONFIG_ROOT:-./config}:/config:rw"
+    restart: unless-stopped

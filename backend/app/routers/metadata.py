@@ -9,6 +9,8 @@ from urllib.request import Request, urlopen
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.server_config import config_directory
+
 
 router = APIRouter(tags=["metadata"])
 TMDB_API_ROOT = "https://api.themoviedb.org/3"
@@ -19,7 +21,7 @@ elif getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
 else:
     APP_ROOT = Path(__file__).resolve().parents[3]
-SETTINGS_FILE = APP_ROOT / "config" / "settings.json"
+SETTINGS_FILE = (config_directory() / "settings.json") if config_directory() else APP_ROOT / "config" / "settings.json"
 
 GENRES = {
     16: "动画", 18: "剧情", 28: "动作", 35: "喜剧", 36: "历史", 37: "西部",

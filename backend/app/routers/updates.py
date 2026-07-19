@@ -22,6 +22,7 @@ from urllib.request import Request, urlopen
 from fastapi import APIRouter, HTTPException, Query
 
 from app.version import GITHUB_LATEST_RELEASE_API, __version__
+from app.server_config import is_server_mode
 
 
 router = APIRouter(tags=["updates"])
@@ -105,6 +106,8 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 
 def _platform_info() -> tuple[str, str | None, bool]:
     frozen = bool(getattr(sys, "frozen", False))
+    if is_server_mode():
+        return "docker", None, False
     if os.environ.get("FLATPAK_ID"):
         return "flatpak", "MediaLinker-x86_64.flatpak", False
     if sys.platform == "win32":

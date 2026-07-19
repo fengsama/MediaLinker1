@@ -11,6 +11,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.server_config import config_directory, is_server_mode, path_is_allowed
+
 
 router = APIRouter(tags=["organizer"])
 INVALID_COMPONENT = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -31,7 +33,7 @@ elif getattr(sys, "frozen", False):
     APP_ROOT = Path(sys.executable).resolve().parent
 else:
     APP_ROOT = Path(__file__).resolve().parents[3]
-HISTORY_FILE = APP_ROOT / "config" / "task-history.json"
+HISTORY_FILE = (config_directory() / "task-history.json") if config_directory() else APP_ROOT / "config" / "task-history.json"
 
 
 class LinkItem(BaseModel):
@@ -161,6 +163,8 @@ def _history_record(
 @router.post("/execute")
 def execute_organization(request: CreateLinksRequest) -> dict[str, object]:
     target_root = Path(request.target_root).expanduser().resolve()
+    if is_server_mode() and not path_is_allowed(target_root):
+        raise HTTPException(status_code=403, detail="输出目录不在管理员允许访问的范围内")
     if not target_root.exists() or not target_root.is_dir():
         raise HTTPException(status_code=400, detail="输出根目录不存在或不是文件夹")
 
@@ -170,6 +174,8 @@ def execute_organization(request: CreateLinksRequest) -> dict[str, object]:
 
     for item in request.items:
         source = Path(item.source_path).expanduser().resolve()
+        if is_server_mode() and not path_is_allowed(source):
+            raise HTTPException(status_code=403, detail=f"源文件不在管理员允许访问的范围内：{source}")
         if not source.exists() or not source.is_file():
             raise HTTPException(status_code=400, detail=f"源文件不存在：{source}")
         if source.stat().st_dev != target_device:
@@ -274,6 +280,8 @@ def undo_task(task_id: str) -> dict[str, object]:
         for item in items:
             source = Path(str(item.get("source_path"))).resolve()
             target = Path(str(item.get("target_path"))).resolve()
+            if is_server_mode() and (not path_is_allowed(source) or not path_is_allowed(target)):
+                raise HTTPException(status_code=403, detail="任务中的文件已超出管理员允许访问的范围")
             identity = dict(item.get("identity") or {})
             if not target.exists():
                 raise HTTPException(status_code=409, detail=f"目标文件已不存在，无法安全撤销：{target}")
