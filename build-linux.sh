@@ -24,6 +24,7 @@ backend/.venv-linux/bin/python -m pip install -r backend/requirements.txt pyinst
 
 backend/.venv-linux/bin/python -m PyInstaller --noconfirm --clean MediaLinker.spec
 cp PORTABLE-README.txt dist/MediaLinker/使用说明.txt
+sed -n 's/^__version__ = "\([^"]*\)"/\1/p' backend/app/version.py > dist/MediaLinker/VERSION
 mkdir -p release
 tar -C dist -czf release/MediaLinker-Linux-x86_64.tar.gz MediaLinker
 

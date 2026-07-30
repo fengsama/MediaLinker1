@@ -8,6 +8,7 @@ import webbrowser
 import uvicorn
 
 from app.main import app
+from app.version import __version__
 
 
 if sys.stdout is None:
@@ -33,6 +34,9 @@ def open_browser(port: int) -> None:
 
 
 def main() -> None:
+    if "--version" in sys.argv:
+        print(__version__)
+        return
     server_mode = os.environ.get("MEDIALINKER_SERVER_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
     port = int(os.environ.get("MEDIALINKER_PORT", "8787")) if server_mode else choose_port()
     host = "0.0.0.0" if server_mode else "127.0.0.1"

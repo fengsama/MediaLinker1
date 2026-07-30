@@ -14,7 +14,7 @@ jobs:
       - name: Install system build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-venv python3-tk flatpak flatpak-builder
+          sudo apt-get install -y python3-venv python3-tk flatpak flatpak-builder zip
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
       - uses: actions/setup-node@v4
@@ -24,7 +24,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Build Linux portable package
         run: |
-          chmod +x build-linux.sh build-flatpak.sh flatpak/medialinker-flatpak.sh
+          chmod +x build-linux.sh build-flatpak.sh flatpak/medialinker-flatpak.sh flatpak/install-or-upgrade.sh
           ./build-linux.sh
       - name: Build Flatpak bundle
         run: ./build-flatpak.sh
@@ -34,4 +34,5 @@ jobs:
           path: |
             release/MediaLinker-Linux-x86_64.tar.gz
             release/MediaLinker-x86_64.flatpak
+            release/MediaLinker-Flatpak-x86_64.zip
           if-no-files-found: error

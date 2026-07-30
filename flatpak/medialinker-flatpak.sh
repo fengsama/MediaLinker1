@@ -1,2 +1,2 @@
 #!/bin/sh
-exec /app/lib/medialinker/MediaLinker
+exec /app/lib/medialinker/MediaLinker "$@"

@@ -17,6 +17,7 @@ modules:
       - mkdir -p /app/lib/medialinker
       - install -Dm755 MediaLinker /app/lib/medialinker/MediaLinker
       - cp -a _internal /app/lib/medialinker/_internal
+      - install -Dm644 VERSION /app/share/medialinker/VERSION
       - test ! -f 使用说明.txt || install -Dm644 使用说明.txt /app/lib/medialinker/使用说明.txt
       - install -Dm755 medialinker-flatpak.sh /app/bin/media-linker
       - install -Dm644 io.github.medialinker.MediaLinker.desktop /app/share/applications/io.github.medialinker.MediaLinker.desktop

@@ -251,14 +251,19 @@ chmod +x build-flatpak.sh
 
 ```text
 release/MediaLinker-x86_64.flatpak
+release/MediaLinker-Flatpak-x86_64.zip
 ```
 
-安装与运行：
+推荐下载并完整解压 `MediaLinker-Flatpak-x86_64.zip`，然后运行其中的一键升级脚本：
 
 ```bash
-flatpak install --user release/MediaLinker-x86_64.flatpak
-flatpak run io.github.medialinker.MediaLinker
+chmod +x install-or-upgrade.sh
+./install-or-upgrade.sh
 ```
+
+脚本会先停止残留的旧版进程，检查并清理用户级/系统级重复安装，保留配置数据，安装新版后再读取程序自身版本进行核对。这样可以避免安装了新版却仍由桌面入口启动旧版的问题。
+
+安装后的启动命令为 `flatpak run --user io.github.medialinker.MediaLinker`。
 
 Flatpak 版本需要网络权限访问 TMDB，也需要主机文件系统权限扫描和整理用户选择的媒体目录。
 
@@ -274,6 +279,7 @@ Linux 构建工程包含：
 
 - `MediaLinker-Linux-x86_64.tar.gz`
 - `MediaLinker-x86_64.flatpak`
+- `MediaLinker-Flatpak-x86_64.zip`
 
 ## 项目结构
 
