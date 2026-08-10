@@ -52,7 +52,7 @@ const historyLoading = ref(false)
 const historyError = ref('')
 const undoingTaskId = ref('')
 const updateInfo = ref({
-  current_version: '0.7.1',
+  current_version: '0.8.1',
   latest_version: '',
   update_available: false,
   can_auto_update: false,

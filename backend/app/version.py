@@ -1,4 +1,4 @@
-__version__ = "0.7.1"
+__version__ = "0.8.1"
 
 GITHUB_REPOSITORY = "fengsama/MediaLinker1"
 GITHUB_LATEST_RELEASE_API = (
