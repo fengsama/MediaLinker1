@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import auth, files, health, lifecycle, metadata, organizer, updates
+from app import automation
+from app.routers import auth, automation as automation_router, files, health, lifecycle, metadata, organizer, updates
 from app.server_config import access_token, is_server_mode
 from app.version import __version__
 
@@ -49,6 +50,17 @@ app.include_router(files.router, prefix="/api/files")
 app.include_router(metadata.router, prefix="/api/metadata")
 app.include_router(organizer.router, prefix="/api/organizer")
 app.include_router(updates.router, prefix="/api/update")
+app.include_router(automation_router.router, prefix="/api/automation")
+
+
+@app.on_event("startup")
+def start_automation_worker() -> None:
+    automation.start_worker()
+
+
+@app.on_event("shutdown")
+def stop_automation_worker() -> None:
+    automation.stop_worker()
 
 
 if getattr(sys, "frozen", False):

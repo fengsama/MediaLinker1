@@ -51,8 +51,24 @@ const taskHistory = ref([])
 const historyLoading = ref(false)
 const historyError = ref('')
 const undoingTaskId = ref('')
+const automationConfig = ref({
+  enabled: false,
+  start_on_boot: false,
+  scan_interval_seconds: 15,
+  settle_seconds: 60,
+  rules: [],
+  recent_events: [],
+  worker_running: false,
+  last_scan_at: '',
+  pending_count: 0,
+  autostart: { supported: false, enabled: false, managed_by: '' },
+})
+const automationLoading = ref(false)
+const automationSaving = ref(false)
+const automationScanning = ref(false)
+const automationError = ref('')
 const updateInfo = ref({
-  current_version: '0.7.1',
+  current_version: '0.8.0',
   latest_version: '',
   update_available: false,
   can_auto_update: false,
@@ -267,6 +283,112 @@ async function openTaskHistory() {
   await loadTaskHistory()
 }
 
+function newAutomationRule() {
+  return {
+    id: window.crypto?.randomUUID?.().replaceAll('-', '') || `${Date.now()}${Math.random()}`,
+    name: '新的自动整理规则',
+    enabled: true,
+    source_path: '',
+    target_root: '',
+    media_type: 'tv',
+    title: '',
+    year: '',
+    season: 1,
+    recursive: true,
+    include_subtitles: true,
+  }
+}
+
+async function loadAutomationStatus() {
+  automationLoading.value = true
+  automationError.value = ''
+  try {
+    const response = await apiFetch('/api/automation/status')
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '读取自动整理设置失败')
+    if (data.autostart?.supported) data.start_on_boot = Boolean(data.autostart.enabled)
+    automationConfig.value = data
+  } catch (requestError) {
+    automationError.value = requestError.message || '读取自动整理设置失败。'
+  } finally {
+    automationLoading.value = false
+  }
+}
+
+async function openAutomationSettings() {
+  settingsView.value = 'automation'
+  await loadAutomationStatus()
+}
+
+function removeAutomationRule(index) {
+  automationConfig.value.rules.splice(index, 1)
+}
+
+async function pickAutomationDirectory(index, field) {
+  automationError.value = ''
+  if (serverMode.value) {
+    await openServerBrowser(`automation:${index}:${field}`)
+    return
+  }
+  try {
+    const purpose = field === 'target_root' ? 'target' : 'source'
+    const response = await apiFetch(`/api/files/pick-directory?purpose=${purpose}`, { method: 'POST' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '无法打开文件夹选择窗口')
+    if (data.selected) automationConfig.value.rules[index][field] = data.path
+  } catch (requestError) {
+    automationError.value = requestError.message || '文件夹选择失败。'
+  }
+}
+
+async function saveAutomationConfig() {
+  automationError.value = ''
+  const invalidRule = automationConfig.value.rules.find((rule) => !rule.source_path.trim() || !rule.target_root.trim() || !rule.title.trim())
+  if (invalidRule) {
+    automationError.value = `规则“${invalidRule.name || '未命名'}”尚未填写完整的监控目录、输出目录和影视名称。`
+    return
+  }
+  automationSaving.value = true
+  try {
+    const payload = {
+      enabled: automationConfig.value.enabled,
+      start_on_boot: automationConfig.value.start_on_boot,
+      scan_interval_seconds: Number(automationConfig.value.scan_interval_seconds),
+      settle_seconds: Number(automationConfig.value.settle_seconds),
+      rules: automationConfig.value.rules,
+    }
+    const response = await apiFetch('/api/automation/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '保存自动整理设置失败')
+    automationConfig.value = data
+  } catch (requestError) {
+    automationError.value = requestError.message || '保存自动整理设置失败。'
+  } finally {
+    automationSaving.value = false
+  }
+}
+
+async function runAutomationScan() {
+  automationScanning.value = true
+  automationError.value = ''
+  try {
+    const response = await apiFetch('/api/automation/scan-now', { method: 'POST' })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.detail || '启动扫描失败')
+    window.setTimeout(async () => {
+      await loadAutomationStatus()
+      automationScanning.value = false
+    }, 1800)
+  } catch (requestError) {
+    automationError.value = requestError.message || '启动扫描失败。'
+    automationScanning.value = false
+  }
+}
+
 async function undoHistoryTask(task) {
   if (!window.confirm(`确认撤销“${task.title}”的 ${task.item_count} 个文件操作吗？`)) return
   undoingTaskId.value = task.id
@@ -469,7 +591,11 @@ async function openServerBrowser(purpose) {
 
 function chooseServerDirectory() {
   if (!serverBrowserPath.value) return
-  if (serverBrowserPurpose.value === 'source') sourcePath.value = serverBrowserPath.value
+  if (serverBrowserPurpose.value.startsWith('automation:')) {
+    const [, rawIndex, field] = serverBrowserPurpose.value.split(':')
+    const rule = automationConfig.value.rules[Number(rawIndex)]
+    if (rule && ['source_path', 'target_root'].includes(field)) rule[field] = serverBrowserPath.value
+  } else if (serverBrowserPurpose.value === 'source') sourcePath.value = serverBrowserPath.value
   else targetPath.value = serverBrowserPath.value
   serverBrowserOpen.value = false
 }
@@ -732,7 +858,7 @@ onMounted(async () => {
 
     <div v-if="serverBrowserOpen" class="modal-backdrop" @click.self="serverBrowserOpen = false">
       <section class="server-browser-modal" role="dialog" aria-modal="true" aria-label="浏览 NAS 目录">
-        <header class="modal-header"><div><span>NAS · 服务器目录</span><h2>{{ serverBrowserPurpose === 'source' ? '选择扫描目录' : '选择输出目录' }}</h2><p>{{ serverBrowserPath || '请选择管理员挂载的目录' }}</p></div><button class="close-button" aria-label="关闭" @click="serverBrowserOpen = false">×</button></header>
+        <header class="modal-header"><div><span>NAS · 服务器目录</span><h2>{{ serverBrowserPurpose === 'source' || serverBrowserPurpose.endsWith('source_path') ? '选择监控/扫描目录' : '选择输出目录' }}</h2><p>{{ serverBrowserPath || '请选择管理员挂载的目录' }}</p></div><button class="close-button" aria-label="关闭" @click="serverBrowserOpen = false">×</button></header>
         <div class="server-browser-toolbar"><button class="secondary" :disabled="serverBrowserLoading || (!serverBrowserPath && !serverBrowserParent)" @click="browseServerDirectory(serverBrowserParent)">← 上一级</button><code>{{ serverBrowserPath || '挂载根目录' }}</code></div>
         <p v-if="serverBrowserError" class="error server-browser-error">{{ serverBrowserError }}</p>
         <div v-if="serverBrowserLoading" class="history-state"><span class="spinner"></span><p>正在读取 NAS 目录…</p></div>
@@ -769,10 +895,15 @@ onMounted(async () => {
     <div v-if="settingsOpen" class="modal-backdrop" @click.self="settingsOpen = false">
       <section class="settings-modal" role="dialog" aria-modal="true" aria-label="软件设置">
         <header class="modal-header">
-          <div><span>MEDIA LINKER · 设置</span><h2>{{ settingsView === 'menu' ? '设置' : (settingsView === 'history' ? '任务历史' : '软件信息') }}</h2><p>{{ settingsView === 'menu' ? '管理 MediaLinker 的软件选项' : (settingsView === 'history' ? '查看和撤销文件整理操作' : '版本信息与在线更新') }}</p></div>
+          <div><span>MEDIA LINKER · 设置</span><h2>{{ settingsView === 'menu' ? '设置' : (settingsView === 'history' ? '任务历史' : (settingsView === 'automation' ? '自动整理服务' : '软件信息')) }}</h2><p>{{ settingsView === 'menu' ? '管理 MediaLinker 的软件选项' : (settingsView === 'history' ? '查看和撤销文件整理操作' : (settingsView === 'automation' ? '监控新增文件并在后台自动创建硬链接' : '版本信息与在线更新')) }}</p></div>
           <button class="close-button" aria-label="关闭设置" @click="settingsOpen = false">×</button>
         </header>
         <div v-if="settingsView === 'menu'" class="settings-menu">
+          <button class="settings-option" @click="openAutomationSettings">
+            <span class="settings-option-icon automation-icon">▶</span>
+            <span><strong>自动整理服务</strong><small>设置监控目录、开机自启动和自动硬链接规则</small></span>
+            <b>›</b>
+          </button>
           <button class="settings-option" @click="openTaskHistory">
             <span class="settings-option-icon history-icon">↶</span>
             <span><strong>任务历史</strong><small>查看已执行任务，撤销硬链接或回滚移动改名</small></span>
@@ -797,6 +928,46 @@ onMounted(async () => {
               <button v-if="task.status === 'completed'" class="undo-button" :disabled="undoingTaskId === task.id" @click="undoHistoryTask(task)">{{ undoingTaskId === task.id ? '正在撤销…' : (task.mode === 'hardlink' ? '删除本次硬链接' : '回滚到原位置') }}</button>
             </article>
           </div>
+        </div>
+        <div v-else-if="settingsView === 'automation'" class="automation-view">
+          <button class="settings-back" @click="settingsView = 'menu'">← 返回设置</button>
+          <p v-if="automationError" class="error">{{ automationError }}</p>
+          <div v-if="automationLoading" class="history-state"><span class="spinner"></span><p>正在读取自动整理设置…</p></div>
+          <template v-else>
+            <div class="automation-master">
+              <label class="switch-row"><input v-model="automationConfig.enabled" type="checkbox" /><span><strong>启用后台自动整理</strong><small>关闭网页后服务仍继续监控；仅创建硬链接，不修改下载目录中的原文件。</small></span></label>
+              <label class="switch-row" :class="{ disabled: serverMode }"><input v-model="automationConfig.start_on_boot" type="checkbox" :disabled="serverMode" /><span><strong>{{ serverMode ? '跟随 Docker / NAS 自动启动' : '开机后自动在后台启动' }}</strong><small>{{ serverMode ? '由容器的自动重启策略管理，无需单独设置。' : '启动时不弹出浏览器，需要管理时点击 MediaLinker 图标即可。' }}</small></span></label>
+            </div>
+            <div class="automation-timing">
+              <label><span>扫描间隔（秒）</span><input v-model.number="automationConfig.scan_interval_seconds" type="number" min="5" max="3600" /></label>
+              <label><span>文件稳定等待（秒）</span><input v-model.number="automationConfig.settle_seconds" type="number" min="10" max="86400" /></label>
+            </div>
+            <div class="automation-note"><strong>工作方式：</strong>新增文件需保持大小不变达到“稳定等待”时间才会处理，避免链接尚未下载完成的文件。电视剧文件名必须带有 S01E01、E01 或“第1集”等集数。</div>
+
+            <div class="automation-rules-header"><div><strong>监控规则</strong><small>一条规则对应一部电影或一部电视剧；可添加多条。</small></div><button class="text-button" @click="automationConfig.rules.push(newAutomationRule())">＋ 添加规则</button></div>
+            <div v-if="!automationConfig.rules.length" class="automation-empty">还没有规则。点击“添加规则”开始配置。</div>
+            <article v-for="(rule, index) in automationConfig.rules" :key="rule.id" class="automation-rule">
+              <header><label><input v-model="rule.enabled" type="checkbox" /><span>启用</span></label><input v-model="rule.name" class="rule-name" maxlength="120" placeholder="规则名称" /><button class="rule-delete" title="删除规则" @click="removeAutomationRule(index)">删除</button></header>
+              <div class="automation-rule-grid">
+                <label class="wide"><span>监控目录</span><div class="compact-picker"><input v-model="rule.source_path" placeholder="下载完成后文件出现的位置" /><button @click="pickAutomationDirectory(index, 'source_path')">选择</button></div></label>
+                <label class="wide"><span>输出根目录</span><div class="compact-picker"><input v-model="rule.target_root" placeholder="Emby / Kodi 媒体库根目录" /><button @click="pickAutomationDirectory(index, 'target_root')">选择</button></div></label>
+                <label><span>类型</span><select v-model="rule.media_type"><option value="tv">电视剧 / 动漫</option><option value="movie">电影</option></select></label>
+                <label><span>中文影视名称</span><input v-model="rule.title" placeholder="例如：进击的巨人" /></label>
+                <label><span>年份（可选）</span><input v-model="rule.year" maxlength="4" placeholder="2013" /></label>
+                <label v-if="rule.media_type === 'tv'"><span>文件名未写季数时使用</span><input v-model.number="rule.season" type="number" min="0" max="99" /></label>
+              </div>
+              <footer><label><input v-model="rule.recursive" type="checkbox" /> 扫描子目录</label><label><input v-model="rule.include_subtitles" type="checkbox" /> 自动关联同名字幕</label></footer>
+            </article>
+
+            <div class="automation-status">
+              <div><small>后台服务</small><strong :class="{ active: automationConfig.worker_running }">{{ automationConfig.worker_running ? '运行中' : '未运行' }}</strong></div>
+              <div><small>上次扫描</small><strong>{{ automationConfig.last_scan_at ? formatHistoryTime(automationConfig.last_scan_at) : '尚未扫描' }}</strong></div>
+              <div><small>等待/需处理</small><strong>{{ automationConfig.pending_count || 0 }}</strong></div>
+            </div>
+            <div class="automation-actions"><button class="secondary" :disabled="automationScanning || automationSaving" @click="runAutomationScan">{{ automationScanning ? '正在扫描…' : '立即扫描一次' }}</button><button class="primary" :disabled="automationSaving" @click="saveAutomationConfig">{{ automationSaving ? '正在保存…' : '保存并应用' }}</button></div>
+
+            <div class="automation-events"><h3>最近运行记录</h3><p v-if="!automationConfig.recent_events?.length">暂时没有运行记录。</p><div v-else><article v-for="event in automationConfig.recent_events" :key="event.id" :class="`event-${event.level}`"><span>{{ event.level === 'success' ? '✓' : (event.level === 'warning' ? '!' : '×') }}</span><div><strong>{{ event.rule_name || '自动整理服务' }}</strong><p>{{ event.message }}</p><small>{{ formatHistoryTime(event.created_at) }}<template v-if="event.path"> · {{ event.path }}</template></small></div></article></div></div>
+          </template>
         </div>
         <div v-else class="about-view">
           <button class="settings-back" @click="settingsView = 'menu'">← 返回设置</button>
