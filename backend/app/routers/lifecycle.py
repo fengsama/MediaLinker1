@@ -14,9 +14,7 @@ _shutdown_tasks: set[asyncio.Task[None]] = set()
 
 async def _shutdown_when_idle() -> None:
     await asyncio.sleep(_SHUTDOWN_GRACE_SECONDS)
-    from app.automation import should_keep_alive
-
-    if not _active_connections and not should_keep_alive():
+    if not _active_connections:
         os._exit(0)
 
 
